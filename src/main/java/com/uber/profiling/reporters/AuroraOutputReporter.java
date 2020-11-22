@@ -15,21 +15,30 @@ public class AuroraOutputReporter implements Reporter {
 
     public void report(String profilerName, Map<String, Object> metrics) {
         System.out.println("report()");
+        doStuff();
     }
 
     public void close() {
         System.out.println("close()");
     }
 
-    public void doStuff() throws Exception {
-        Class.forName("com.mysql.jdbc.Driver");
-        Connection con = DriverManager.getConnection(
-                "jdbc:mysql://localhost:3306/", "root", FUNNY_PASSWORD);
+    public void doStuff() {
+        try {
+            Class.forName("com.mysql.jdbc.Driver");
+        } catch (ClassNotFoundException ex) {
+            System.out.println("jdbc driver not found");
+        }
+        try {
+            Connection con = DriverManager.getConnection(
+                    "jdbc:mysql://localhost:3306/", "root", FUNNY_PASSWORD);
 
-        Statement stmt = con.createStatement();
-        ResultSet rs = stmt.executeQuery("select * from emp");
-        while (rs.next())
-            System.out.println(rs.getInt(1) + "  " + rs.getString(2) + "  " + rs.getString(3));
-        con.close();
+            Statement stmt = con.createStatement();
+            ResultSet rs = stmt.executeQuery("select * from emp");
+            while (rs.next())
+                System.out.println(rs.getInt(1) + "  " + rs.getString(2) + "  " + rs.getString(3));
+            con.close();
+        } catch (SQLException ex) {
+            System.out.println(ex.getMessage());
+        }
     }
 }
