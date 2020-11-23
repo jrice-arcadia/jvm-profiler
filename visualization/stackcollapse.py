@@ -13,7 +13,6 @@ with open(inputFile) as f:
 
     for line in f.readlines():
         stacktraceLog = json.loads(line)
-
         assert 'stacktrace' in stacktraceLog, "Malformated json. 'stacktrace' key doesn't exist."
         stacktrace = stacktraceLog['stacktrace']
 

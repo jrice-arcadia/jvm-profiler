@@ -19,7 +19,7 @@ public class AuroraOutputReporter implements Reporter {
             String startEpoch = metrics.get("startEpoch").toString();
             String endEpoch = metrics.get("endEpoch").toString();
             String stackTraceRaw = JsonUtils.serialize(metrics);
-            storeStacktrace(startEpoch, endEpoch, stackTraceRaw);
+            storeStacktrace(startEpoch, endEpoch, stackTraceRaw.trim());
         }
 
     }
@@ -43,6 +43,8 @@ public class AuroraOutputReporter implements Reporter {
             PreparedStatement ps = con.prepareStatement(insert);
             ps.setString(1, startEpoch + "." + endEpoch);
             ps.setString(2, stackTraceRaw);
+
+            System.out.println("stackTraceRaw:\n" + stackTraceRaw);
 
             int res = ps.executeUpdate();
             con.close();
