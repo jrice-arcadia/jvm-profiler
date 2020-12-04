@@ -4,12 +4,8 @@ import com.uber.profiling.Reporter;
 import com.uber.profiling.util.JsonUtils;
 
 import java.math.BigDecimal;
-import java.math.BigInteger;
 import java.sql.*;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
-import java.util.Stack;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
 public class AuroraOutputReporter implements Reporter {
@@ -22,8 +18,12 @@ public class AuroraOutputReporter implements Reporter {
     private final String FUNNY_PASSWORD = "password";
 
     public void report(String profilerName, Map<String, Object> metrics) {
+        if (!profilerName.equalsIgnoreCase("stacktrace") && !profilerName.equalsIgnoreCase("IO")
+            && !profilerName.equalsIgnoreCase("CpuAndMemory")) {
+            System.out.println("JOHN RICE: report(). profiler name was not Stacktrace or IO. profilername: " + profilerName);
+        }
         if (connPool == null) initConnectionPool();
-        if (metrics.containsKey("stacktrace")) {
+     /*   if (metrics.containsKey("stacktrace")) {
             System.out.println("AuroraOutputReporter(): Storing stacktrace.");
             String startEpoch = metrics.get("startEpoch").toString();
             String endEpoch = metrics.get("endEpoch").toString();
@@ -33,9 +33,11 @@ public class AuroraOutputReporter implements Reporter {
         if (profilerName.equalsIgnoreCase("cpuandmemory")) {
             System.out.println("AuroraOutputReporter(): Storing CPU and memory stats.");
             storeCpuAndMemory(metrics);
-
+        }*/
+        if (profilerName.equalsIgnoreCase("methodduration")) {
+            System.out.println("AuroraOutputReporter(): Storing method duration stats.");
+            storeMethodAndDuration(metrics);
         }
-
     }
 
     private void initConnectionPool() {
@@ -64,6 +66,50 @@ public class AuroraOutputReporter implements Reporter {
         } catch (SQLException ex) {
             System.out.println("couldnt close");
         }
+    }
+
+ //   {"metricName":"duration.count","processName":"27538@jrice-mbp1.local","appId":"local-1606247752595","host":"jrice-mbp1.local","processUuid":"3e8ae0cc-4e5b-4fac-8821-fd2ce2cbacfc","metricValue":22.0,"methodName":"apply","className":"org.apache.spark.sql.Dataset$$anonfun$53","epochMillis":1606247817596,"tag":"cclf-notebooks"}
+
+    public void storeMethodAndDuration(Map<String, Object> metrics) {
+        System.out.println("metrics as json:");
+        System.out.println(JsonUtils.serialize(metrics));
+
+        String transform_name = metrics.getOrDefault("tag", "UNKNOWN").toString();
+        String timestamp      = metrics.getOrDefault("epochMillis", "0").toString();
+        String host = metrics.getOrDefault("name", "UNKNOWN").toString();
+        String method_name = metrics.getOrDefault("className", "unknown").toString() + "." + metrics.getOrDefault("methodName", "unknown").toString();
+        String type_of_metric = metrics.getOrDefault("metricName", "unknown").toString();
+        String duration = metrics.getOrDefault("metricValue", "0").toString();
+
+        try {
+            while (connPool.isEmpty()) {
+                Thread.sleep(5000);
+            }
+            Connection con = connPool.pop();
+
+            String insert = String.format("INSERT INTO methodduration " +
+                    "(transform_name, method_name, timestamp, duration_ms, type_of_metric, host)" +
+                    "VALUES (?,?,?,?,?,?,?)");
+
+
+            PreparedStatement ps = con.prepareStatement(insert);
+            ps.setString(1, transform_name);
+            ps.setString(2, method_name);
+            ps.setBigDecimal(3, new BigDecimal(timestamp));
+            ps.setBigDecimal(4, new BigDecimal(duration));
+            ps.setString(5, type_of_metric);
+            ps.setString(6, host);
+
+            int res = ps.executeUpdate();
+            connPool.push(con);
+        } catch (SQLException ex) {
+            System.out.println("AuroraOutputReporter(): SQLException thrown.");
+            System.out.println(ex.getMessage());
+        } catch (InterruptedException ex) {
+            System.out.print("InterruptedException");
+            System.out.println(ex.getMessage());
+        }
+
     }
 
     public void storeStacktrace(String startEpoch, String endEpoch, String stackTraceRaw) {
