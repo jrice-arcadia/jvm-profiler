@@ -1,0 +1,109 @@
+{
+  "heapMemoryMax": 14316732416,
+  "role": "driver",
+  "nonHeapMemoryTotalUsed": 166529984,
+  "bufferPools": [
+    {
+      "totalCapacity": 648460,
+      "name": "direct",
+      "count": 73,
+      "memoryUsed": 648461
+    },
+    {
+      "totalCapacity": 0,
+      "name": "mapped",
+      "count": 0,
+      "memoryUsed": 0
+    }
+  ],
+  "heapMemoryTotalUsed": 381750720,
+  "vmRSS": 1394466816,
+  "epochMillis": 1606842237436,
+  "nonHeapMemoryCommitted": 172621824,
+  "heapMemoryCommitted": 2165309440,
+  "memoryPools": [
+    {
+      "peakUsageMax": 251658240,
+      "usageMax": 251658240,
+      "peakUsageUsed": 42019392,
+      "name": "Code Cache",
+      "peakUsageCommitted": 42270720,
+      "usageUsed": 42019392,
+      "type": "Non-heap memory",
+      "usageCommitted": 42270720
+    },
+    {
+      "peakUsageMax": -1,
+      "usageMax": -1,
+      "peakUsageUsed": 109703904,
+      "name": "Metaspace",
+      "peakUsageCommitted": 113139712,
+      "usageUsed": 109703904,
+      "type": "Non-heap memory",
+      "usageCommitted": 113139712
+    },
+    {
+      "peakUsageMax": 1073741824,
+      "usageMax": 1073741824,
+      "peakUsageUsed": 14806688,
+      "name": "Compressed Class Space",
+      "peakUsageCommitted": 17211392,
+      "usageUsed": 14806688,
+      "type": "Non-heap memory",
+      "usageCommitted": 17211392
+    },
+    {
+      "peakUsageMax": 5281677312,
+      "usageMax": 5226627072,
+      "peakUsageUsed": 505937920,
+      "name": "PS Eden Space",
+      "peakUsageCommitted": 621281280,
+      "usageUsed": 108757128,
+      "type": "Heap memory",
+      "usageCommitted": 621281280
+    },
+    {
+      "peakUsageMax": 69730304,
+      "usageMax": 63963136,
+      "peakUsageUsed": 59221560,
+      "name": "PS Survivor Space",
+      "peakUsageCommitted": 69730304,
+      "usageUsed": 55210352,
+      "type": "Heap memory",
+      "usageCommitted": 63963136
+    },
+    {
+      "peakUsageMax": 10737418240,
+      "usageMax": 10737418240,
+      "peakUsageUsed": 217783240,
+      "name": "PS Old Gen",
+      "peakUsageCommitted": 1480065024,
+      "usageUsed": 217783240,
+      "type": "Heap memory",
+      "usageCommitted": 1480065024
+    }
+  ],
+  "processCpuLoad": 0.03127480055135542,
+  "systemCpuLoad": 0.11511632763877866,
+  "processCpuTime": 43140000000,
+  "vmHWM": 1394466816,
+  "appId": "5e046610-51ba-4624-95a2-359e359c85b3-0010-driver-20201201164642-2727",
+  "vmPeak": 27164463104,
+  "name": "13@ip-10-115-101-119.arcadia.implementation2.local",
+  "host": "ip-10-115-101-119.arcadia.implementation2.local",
+  "processUuid": "6b8f9489-9574-4f2c-974c-f2f5a756418b",
+  "nonHeapMemoryMax": -1,
+  "vmSize": 27164463104,
+  "gc": [
+    {
+      "collectionTime": 243,
+      "name": "PS Scavenge",
+      "collectionCount": 12
+    },
+    {
+      "collectionTime": 334,
+      "name": "PS MarkSweep",
+      "collectionCount": 4
+    }
+  ]
+}

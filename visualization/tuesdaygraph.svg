@@ -1,0 +1,1904 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="1030" onload="init(evt)" viewBox="0 0 1200 1030" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+	}
+
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom();
+			zoom(target);
+		}
+		else if (e.target.id == "unzoom") unzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+	}, false)
+
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+		return;
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		// Fit in full text width
+		if (/^ *$/.test(txt) || t.getSubStringLength(0, txt.length) < w)
+			return;
+
+		for (var x = txt.length - 2; x > 0; x--) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom() {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			update_text(el[i]);
+		}
+		search();
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) {
+				currentSearchTerm = term;
+				search();
+			}
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (currentSearchTerm === null) return;
+		var term = currentSearchTerm;
+
+		var re = new RegExp(term, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="1030.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >Flame Graph</text>
+<text id="details" x="10.00" y="1013" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="1013" > </text>
+<g id="frames">
+<g >
+<title>sun.nio.ch.KQueueArrayWrapper.kevent0 (79 samples, 8.32%)</title><rect x="10.0" y="789" width="98.1" height="15.0" fill="rgb(251,36,15)" rx="2" ry="2" />
+<text  x="13.00" y="799.5" >sun.nio.ch...</text>
+</g>
+<g >
+<title>java.util.concurrent.ThreadPoolExecutor.getTask (148 samples, 15.58%)</title><rect x="109.4" y="917" width="183.8" height="15.0" fill="rgb(245,115,36)" rx="2" ry="2" />
+<text  x="112.37" y="927.5" >java.util.concurrent.Th..</text>
+</g>
+<g >
+<title>sun.misc.Resource.getBytes (1 samples, 0.11%)</title><rect x="1183.8" y="453" width="1.2" height="15.0" fill="rgb(246,199,24)" rx="2" ry="2" />
+<text  x="1186.79" y="463.5" ></text>
+</g>
+<g >
+<title>scala.collection.TraversableLike$$anonfun$flatMap$1.apply (1 samples, 0.11%)</title><rect x="1182.5" y="693" width="1.3" height="15.0" fill="rgb(222,190,26)" rx="2" ry="2" />
+<text  x="1185.55" y="703.5" ></text>
+</g>
+<g >
+<title>java.util.concurrent.locks.LockSupport.park (338 samples, 35.58%)</title><rect x="294.4" y="869" width="419.9" height="15.0" fill="rgb(213,47,47)" rx="2" ry="2" />
+<text  x="297.44" y="879.5" >java.util.concurrent.locks.LockSupport.park</text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="990.0" y="773" width="1.3" height="15.0" fill="rgb(240,69,53)" rx="2" ry="2" />
+<text  x="993.02" y="783.5" ></text>
+</g>
+<g >
+<title>io.netty.channel.nio.NioEventLoop.select (79 samples, 8.32%)</title><rect x="10.0" y="885" width="98.1" height="15.0" fill="rgb(242,62,10)" rx="2" ry="2" />
+<text  x="13.00" y="895.5" >io.netty.ch..</text>
+</g>
+<g >
+<title>org.spark_project.jetty.server.AbstractConnector.doStart (1 samples, 0.11%)</title><rect x="986.3" y="389" width="1.2" height="15.0" fill="rgb(250,78,50)" rx="2" ry="2" />
+<text  x="989.29" y="399.5" ></text>
+</g>
+<g >
+<title>java.util.Formatter.format (3 samples, 0.32%)</title><rect x="1186.3" y="789" width="3.7" height="15.0" fill="rgb(215,163,44)" rx="2" ry="2" />
+<text  x="1189.27" y="799.5" ></text>
+</g>
+<g >
+<title>sun.misc.Launcher$AppClassLoader.loadClass (1 samples, 0.11%)</title><rect x="1181.3" y="629" width="1.2" height="15.0" fill="rgb(228,127,24)" rx="2" ry="2" />
+<text  x="1184.31" y="639.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.conf.Configuration.loadResources (1 samples, 0.11%)</title><rect x="1182.5" y="373" width="1.3" height="15.0" fill="rgb(233,127,21)" rx="2" ry="2" />
+<text  x="1185.55" y="383.5" ></text>
+</g>
+<g >
+<title>java.lang.reflect.Method.invoke (4 samples, 0.42%)</title><rect x="1185.0" y="933" width="5.0" height="15.0" fill="rgb(229,13,8)" rx="2" ry="2" />
+<text  x="1188.03" y="943.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.internal.config.TypedConfigBuilder.createOptional (1 samples, 0.11%)</title><rect x="1183.8" y="629" width="1.2" height="15.0" fill="rgb(207,181,15)" rx="2" ry="2" />
+<text  x="1186.79" y="639.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="1180.1" y="597" width="1.2" height="15.0" fill="rgb(239,152,28)" rx="2" ry="2" />
+<text  x="1183.06" y="607.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.defineClass (1 samples, 0.11%)</title><rect x="1180.1" y="565" width="1.2" height="15.0" fill="rgb(232,73,20)" rx="2" ry="2" />
+<text  x="1183.06" y="575.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.SparkSubmit.org$apache$spark$deploy$SparkSubmit$$runMain (161 samples, 16.95%)</title><rect x="985.1" y="869" width="199.9" height="15.0" fill="rgb(205,66,15)" rx="2" ry="2" />
+<text  x="988.05" y="879.5" >org.apache.spark.deploy.Sp..</text>
+</g>
+<g >
+<title>java.util.concurrent.SynchronousQueue$TransferStack.awaitFulfill (128 samples, 13.47%)</title><rect x="134.2" y="869" width="159.0" height="15.0" fill="rgb(222,66,44)" rx="2" ry="2" />
+<text  x="137.21" y="879.5" >java.util.concurrent..</text>
+</g>
+<g >
+<title>java.net.InetAddress$2.lookupAllHostAddr (152 samples, 16.00%)</title><rect x="991.3" y="661" width="188.8" height="15.0" fill="rgb(244,152,41)" rx="2" ry="2" />
+<text  x="994.26" y="671.5" >java.net.InetAddress$2.l..</text>
+</g>
+<g >
+<title>java.util.zip.InflaterInputStream.read (1 samples, 0.11%)</title><rect x="1183.8" y="437" width="1.2" height="15.0" fill="rgb(245,75,29)" rx="2" ry="2" />
+<text  x="1186.79" y="447.5" ></text>
+</g>
+<g >
+<title>java.util.zip.ZipFile$ZipFileInflaterInputStream.fill (1 samples, 0.11%)</title><rect x="987.5" y="421" width="1.3" height="15.0" fill="rgb(205,204,5)" rx="2" ry="2" />
+<text  x="990.54" y="431.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.rpc.netty.NettyRpcEnv$$anonfun$openChannel$1.apply (1 samples, 0.11%)</title><rect x="293.2" y="661" width="1.2" height="15.0" fill="rgb(231,22,44)" rx="2" ry="2" />
+<text  x="296.20" y="671.5" ></text>
+</g>
+<g >
+<title>java.util.zip.ZipFile.read (1 samples, 0.11%)</title><rect x="990.0" y="549" width="1.3" height="15.0" fill="rgb(212,83,53)" rx="2" ry="2" />
+<text  x="993.02" y="559.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="293.2" y="581" width="1.2" height="15.0" fill="rgb(208,15,52)" rx="2" ry="2" />
+<text  x="296.20" y="591.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.security.UserGroupInformation.loginUserFromSubject (1 samples, 0.11%)</title><rect x="1182.5" y="533" width="1.3" height="15.0" fill="rgb(227,129,14)" rx="2" ry="2" />
+<text  x="1185.55" y="543.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.sql.SparkSession$Builder.getOrCreate (2 samples, 0.21%)</title><rect x="985.1" y="725" width="2.4" height="15.0" fill="rgb(239,23,20)" rx="2" ry="2" />
+<text  x="988.05" y="735.5" ></text>
+</g>
+<g >
+<title>java.util.concurrent.SynchronousQueue$TransferStack.transfer (128 samples, 13.47%)</title><rect x="134.2" y="885" width="159.0" height="15.0" fill="rgb(221,86,11)" rx="2" ry="2" />
+<text  x="137.21" y="895.5" >java.util.concurrent..</text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="988.8" y="677" width="1.2" height="15.0" fill="rgb(248,28,50)" rx="2" ry="2" />
+<text  x="991.78" y="687.5" ></text>
+</g>
+<g >
+<title>java.util.concurrent.locks.LockSupport.parkNanos (128 samples, 13.47%)</title><rect x="134.2" y="853" width="159.0" height="15.0" fill="rgb(217,39,49)" rx="2" ry="2" />
+<text  x="137.21" y="863.5" >java.util.concurrent..</text>
+</g>
+<g >
+<title>org.apache.xerces.jaxp.DocumentBuilderImpl.&lt;init&gt; (1 samples, 0.11%)</title><rect x="1181.3" y="661" width="1.2" height="15.0" fill="rgb(237,121,47)" rx="2" ry="2" />
+<text  x="1184.31" y="671.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.findClass (1 samples, 0.11%)</title><rect x="1183.8" y="549" width="1.2" height="15.0" fill="rgb(231,122,40)" rx="2" ry="2" />
+<text  x="1186.79" y="559.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.security.Groups.getUserToGroupsMappingService (1 samples, 0.11%)</title><rect x="1182.5" y="485" width="1.3" height="15.0" fill="rgb(226,120,40)" rx="2" ry="2" />
+<text  x="1185.55" y="495.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.conf.Configuration.&lt;clinit&gt; (1 samples, 0.11%)</title><rect x="1180.1" y="773" width="1.2" height="15.0" fill="rgb(253,101,41)" rx="2" ry="2" />
+<text  x="1183.06" y="783.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.findClass (1 samples, 0.11%)</title><rect x="1181.3" y="597" width="1.2" height="15.0" fill="rgb(242,139,41)" rx="2" ry="2" />
+<text  x="1184.31" y="607.5" ></text>
+</g>
+<g >
+<title>io.netty.util.concurrent.SingleThreadEventExecutor$4.run (79 samples, 8.32%)</title><rect x="10.0" y="917" width="98.1" height="15.0" fill="rgb(236,98,43)" rx="2" ry="2" />
+<text  x="13.00" y="927.5" >io.netty.ut..</text>
+</g>
+<g >
+<title>org.apache.spark.sql.SparkSession$Builder$$anonfun$7.apply (2 samples, 0.21%)</title><rect x="985.1" y="677" width="2.4" height="15.0" fill="rgb(246,193,27)" rx="2" ry="2" />
+<text  x="988.05" y="687.5" ></text>
+</g>
+<g >
+<title>java.security.AccessController.doPrivileged (1 samples, 0.11%)</title><rect x="987.5" y="533" width="1.3" height="15.0" fill="rgb(249,135,40)" rx="2" ry="2" />
+<text  x="990.54" y="543.5" ></text>
+</g>
+<g >
+<title>java.lang.StringBuilder.append (2 samples, 0.21%)</title><rect x="1186.3" y="693" width="2.5" height="15.0" fill="rgb(252,109,29)" rx="2" ry="2" />
+<text  x="1189.27" y="703.5" ></text>
+</g>
+<g >
+<title>sun.misc.Launcher$AppClassLoader.loadClass (1 samples, 0.11%)</title><rect x="293.2" y="565" width="1.2" height="15.0" fill="rgb(238,191,10)" rx="2" ry="2" />
+<text  x="296.20" y="575.5" ></text>
+</g>
+<g >
+<title>java.security.SecureClassLoader.defineClass (1 samples, 0.11%)</title><rect x="986.3" y="117" width="1.2" height="15.0" fill="rgb(235,219,32)" rx="2" ry="2" />
+<text  x="989.29" y="127.5" ></text>
+</g>
+<g >
+<title>org.apache.commons.logging.LogFactory.createFactoryStore (1 samples, 0.11%)</title><rect x="1180.1" y="741" width="1.2" height="15.0" fill="rgb(227,126,9)" rx="2" ry="2" />
+<text  x="1183.06" y="751.5" ></text>
+</g>
+<g >
+<title>org.spark_project.jetty.server.ServerConnector.doStart (1 samples, 0.11%)</title><rect x="986.3" y="421" width="1.2" height="15.0" fill="rgb(210,189,34)" rx="2" ry="2" />
+<text  x="989.29" y="431.5" ></text>
+</g>
+<g >
+<title>java.lang.StringBuilder.append (2 samples, 0.21%)</title><rect x="1186.3" y="741" width="2.5" height="15.0" fill="rgb(212,188,33)" rx="2" ry="2" />
+<text  x="1189.27" y="751.5" ></text>
+</g>
+<g >
+<title>org.apache.ivy.plugins.resolver.URLResolver.&lt;init&gt; (152 samples, 16.00%)</title><rect x="991.3" y="773" width="188.8" height="15.0" fill="rgb(235,126,36)" rx="2" ry="2" />
+<text  x="994.26" y="783.5" >org.apache.ivy.plugins.r..</text>
+</g>
+<g >
+<title>java.net.URLClassLoader.access$100 (1 samples, 0.11%)</title><rect x="1181.3" y="533" width="1.2" height="15.0" fill="rgb(250,12,30)" rx="2" ry="2" />
+<text  x="1184.31" y="543.5" ></text>
+</g>
+<g >
+<title>sun.misc.Resource.getBytes (1 samples, 0.11%)</title><rect x="1181.3" y="117" width="1.2" height="15.0" fill="rgb(242,210,50)" rx="2" ry="2" />
+<text  x="1184.31" y="127.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.security.UserGroupInformation.getLoginUser (1 samples, 0.11%)</title><rect x="1182.5" y="549" width="1.3" height="15.0" fill="rgb(250,192,44)" rx="2" ry="2" />
+<text  x="1185.55" y="559.5" ></text>
+</g>
+<g >
+<title>org.spark_project.jetty.io.SelectorManager.newSelector (1 samples, 0.11%)</title><rect x="986.3" y="309" width="1.2" height="15.0" fill="rgb(229,71,52)" rx="2" ry="2" />
+<text  x="989.29" y="319.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="987.5" y="565" width="1.3" height="15.0" fill="rgb(251,39,1)" rx="2" ry="2" />
+<text  x="990.54" y="575.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.access$100 (1 samples, 0.11%)</title><rect x="1183.8" y="485" width="1.2" height="15.0" fill="rgb(234,145,3)" rx="2" ry="2" />
+<text  x="1186.79" y="495.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.findClass (1 samples, 0.11%)</title><rect x="293.2" y="533" width="1.2" height="15.0" fill="rgb(235,157,2)" rx="2" ry="2" />
+<text  x="296.20" y="543.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.defineClass (1 samples, 0.11%)</title><rect x="1181.3" y="293" width="1.2" height="15.0" fill="rgb(243,142,24)" rx="2" ry="2" />
+<text  x="1184.31" y="303.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="988.8" y="597" width="1.2" height="15.0" fill="rgb(230,80,44)" rx="2" ry="2" />
+<text  x="991.78" y="607.5" ></text>
+</g>
+<g >
+<title>sun.misc.Unsafe.park (20 samples, 2.11%)</title><rect x="109.4" y="853" width="24.8" height="15.0" fill="rgb(242,109,23)" rx="2" ry="2" />
+<text  x="112.37" y="863.5" >s..</text>
+</g>
+<g >
+<title>io.netty.channel.nio.SelectedSelectionKeySetSelector.select (79 samples, 8.32%)</title><rect x="10.0" y="869" width="98.1" height="15.0" fill="rgb(229,54,47)" rx="2" ry="2" />
+<text  x="13.00" y="879.5" >io.netty.ch..</text>
+</g>
+<g >
+<title>sun.misc.Unsafe.park (128 samples, 13.47%)</title><rect x="134.2" y="837" width="159.0" height="15.0" fill="rgb(222,130,49)" rx="2" ry="2" />
+<text  x="137.21" y="847.5" >sun.misc.Unsafe.park</text>
+</g>
+<g >
+<title>java.net.URLClassLoader.defineClass (1 samples, 0.11%)</title><rect x="1183.8" y="469" width="1.2" height="15.0" fill="rgb(232,142,4)" rx="2" ry="2" />
+<text  x="1186.79" y="479.5" ></text>
+</g>
+<g >
+<title>java.security.AccessController.doPrivileged (1 samples, 0.11%)</title><rect x="1181.3" y="389" width="1.2" height="15.0" fill="rgb(217,138,49)" rx="2" ry="2" />
+<text  x="1184.31" y="399.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.findClass (1 samples, 0.11%)</title><rect x="990.0" y="725" width="1.3" height="15.0" fill="rgb(209,152,0)" rx="2" ry="2" />
+<text  x="993.02" y="735.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.defineClass1 (1 samples, 0.11%)</title><rect x="1181.3" y="277" width="1.2" height="15.0" fill="rgb(254,34,14)" rx="2" ry="2" />
+<text  x="1184.31" y="287.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.SparkSubmit$$anonfun$prepareSubmitEnvironment$1.apply (1 samples, 0.11%)</title><rect x="1183.8" y="757" width="1.2" height="15.0" fill="rgb(226,146,34)" rx="2" ry="2" />
+<text  x="1186.79" y="767.5" ></text>
+</g>
+<g >
+<title>java.io.PrintStream.println (1 samples, 0.11%)</title><rect x="1185.0" y="789" width="1.3" height="15.0" fill="rgb(239,147,44)" rx="2" ry="2" />
+<text  x="1188.03" y="799.5" ></text>
+</g>
+<g >
+<title>sun.misc.Launcher$AppClassLoader.loadClass (1 samples, 0.11%)</title><rect x="988.8" y="661" width="1.2" height="15.0" fill="rgb(224,106,21)" rx="2" ry="2" />
+<text  x="991.78" y="671.5" ></text>
+</g>
+<g >
+<title>java.util.zip.ZipFile$ZipFileInflaterInputStream.fill (1 samples, 0.11%)</title><rect x="1181.3" y="85" width="1.2" height="15.0" fill="rgb(223,136,20)" rx="2" ry="2" />
+<text  x="1184.31" y="95.5" ></text>
+</g>
+<g >
+<title>com.uber.profiling.AgentImpl.run (4 samples, 0.42%)</title><rect x="1185.0" y="853" width="5.0" height="15.0" fill="rgb(236,185,24)" rx="2" ry="2" />
+<text  x="1188.03" y="863.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="1181.3" y="421" width="1.2" height="15.0" fill="rgb(208,191,40)" rx="2" ry="2" />
+<text  x="1184.31" y="431.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="1181.3" y="165" width="1.2" height="15.0" fill="rgb(253,138,2)" rx="2" ry="2" />
+<text  x="1184.31" y="175.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.ui.JettyUtils$$anonfun$7.apply (1 samples, 0.11%)</title><rect x="986.3" y="501" width="1.2" height="15.0" fill="rgb(211,41,25)" rx="2" ry="2" />
+<text  x="989.29" y="511.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.access$100 (1 samples, 0.11%)</title><rect x="986.3" y="149" width="1.2" height="15.0" fill="rgb(211,74,4)" rx="2" ry="2" />
+<text  x="989.29" y="159.5" ></text>
+</g>
+<g >
+<title>scala.Option.getOrElse (2 samples, 0.21%)</title><rect x="985.1" y="709" width="2.4" height="15.0" fill="rgb(217,210,38)" rx="2" ry="2" />
+<text  x="988.05" y="719.5" ></text>
+</g>
+<g >
+<title>org.apache.commons.logging.LogFactory.&lt;clinit&gt; (1 samples, 0.11%)</title><rect x="1180.1" y="757" width="1.2" height="15.0" fill="rgb(241,46,52)" rx="2" ry="2" />
+<text  x="1183.06" y="767.5" ></text>
+</g>
+<g >
+<title>com.arcadia.notebook.NotebookSpark.main (4 samples, 0.42%)</title><rect x="985.1" y="773" width="4.9" height="15.0" fill="rgb(239,69,42)" rx="2" ry="2" />
+<text  x="988.05" y="783.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.internal.config.OptionalConfigEntry.&lt;init&gt; (1 samples, 0.11%)</title><rect x="1183.8" y="613" width="1.2" height="15.0" fill="rgb(227,75,23)" rx="2" ry="2" />
+<text  x="1186.79" y="623.5" ></text>
+</g>
+<g >
+<title>java.util.zip.ZipFile$ZipFileInputStream.read (1 samples, 0.11%)</title><rect x="1181.3" y="69" width="1.2" height="15.0" fill="rgb(246,64,13)" rx="2" ry="2" />
+<text  x="1184.31" y="79.5" ></text>
+</g>
+<g >
+<title>java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.awaitNanos (20 samples, 2.11%)</title><rect x="109.4" y="885" width="24.8" height="15.0" fill="rgb(231,30,48)" rx="2" ry="2" />
+<text  x="112.37" y="895.5" >j..</text>
+</g>
+<g >
+<title>scala.collection.mutable.HashMap$$anonfun$foreach$1.apply (1 samples, 0.11%)</title><rect x="1183.8" y="789" width="1.2" height="15.0" fill="rgb(225,57,4)" rx="2" ry="2" />
+<text  x="1186.79" y="799.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.defineClass1 (1 samples, 0.11%)</title><rect x="986.3" y="85" width="1.2" height="15.0" fill="rgb(211,18,10)" rx="2" ry="2" />
+<text  x="989.29" y="95.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.defineClass (1 samples, 0.11%)</title><rect x="990.0" y="645" width="1.3" height="15.0" fill="rgb(254,181,52)" rx="2" ry="2" />
+<text  x="993.02" y="655.5" ></text>
+</g>
+<g >
+<title>scala.collection.TraversableLike$$anonfun$map$1.apply (1 samples, 0.11%)</title><rect x="987.5" y="661" width="1.3" height="15.0" fill="rgb(250,20,25)" rx="2" ry="2" />
+<text  x="990.54" y="671.5" ></text>
+</g>
+<g >
+<title>scala.collection.IndexedSeqOptimized$class.foreach (1 samples, 0.11%)</title><rect x="1182.5" y="725" width="1.3" height="15.0" fill="rgb(249,161,19)" rx="2" ry="2" />
+<text  x="1185.55" y="735.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.SparkConf$.&lt;init&gt; (1 samples, 0.11%)</title><rect x="1183.8" y="677" width="1.2" height="15.0" fill="rgb(217,123,49)" rx="2" ry="2" />
+<text  x="1186.79" y="687.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="1180.1" y="661" width="1.2" height="15.0" fill="rgb(233,49,4)" rx="2" ry="2" />
+<text  x="1183.06" y="671.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.security.UserGroupInformation.initialize (1 samples, 0.11%)</title><rect x="1182.5" y="501" width="1.3" height="15.0" fill="rgb(249,211,24)" rx="2" ry="2" />
+<text  x="1185.55" y="511.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="1181.3" y="181" width="1.2" height="15.0" fill="rgb(226,19,9)" rx="2" ry="2" />
+<text  x="1184.31" y="191.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.rpc.netty.NettyRpcEnv.org$apache$spark$rpc$netty$NettyRpcEnv$$downloadClient (1 samples, 0.11%)</title><rect x="293.2" y="629" width="1.2" height="15.0" fill="rgb(240,99,42)" rx="2" ry="2" />
+<text  x="296.20" y="639.5" ></text>
+</g>
+<g >
+<title>org.apache.ivy.plugins.resolver.AbstractPatternsBasedResolver.&lt;init&gt; (152 samples, 16.00%)</title><rect x="991.3" y="741" width="188.8" height="15.0" fill="rgb(233,28,3)" rx="2" ry="2" />
+<text  x="994.26" y="751.5" >org.apache.ivy.plugins.r..</text>
+</g>
+<g >
+<title>java.io.PrintStream.write (1 samples, 0.11%)</title><rect x="1185.0" y="693" width="1.3" height="15.0" fill="rgb(242,190,38)" rx="2" ry="2" />
+<text  x="1188.03" y="703.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.SparkSubmit$$anon$2.doSubmit (161 samples, 16.95%)</title><rect x="985.1" y="933" width="199.9" height="15.0" fill="rgb(207,82,44)" rx="2" ry="2" />
+<text  x="988.05" y="943.5" >org.apache.spark.deploy.Sp..</text>
+</g>
+<g >
+<title>sun.misc.Launcher$AppClassLoader.loadClass (1 samples, 0.11%)</title><rect x="1181.3" y="245" width="1.2" height="15.0" fill="rgb(227,213,48)" rx="2" ry="2" />
+<text  x="1184.31" y="255.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="1181.3" y="373" width="1.2" height="15.0" fill="rgb(225,2,54)" rx="2" ry="2" />
+<text  x="1184.31" y="383.5" ></text>
+</g>
+<g >
+<title>sun.instrument.InstrumentationImpl.loadClassAndStartAgent (4 samples, 0.42%)</title><rect x="1185.0" y="949" width="5.0" height="15.0" fill="rgb(241,99,42)" rx="2" ry="2" />
+<text  x="1188.03" y="959.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.util.Utils$.doFetchFile (1 samples, 0.11%)</title><rect x="293.2" y="725" width="1.2" height="15.0" fill="rgb(229,220,53)" rx="2" ry="2" />
+<text  x="296.20" y="735.5" ></text>
+</g>
+<g >
+<title>org.spark_project.jetty.util.component.AbstractLifeCycle.start (1 samples, 0.11%)</title><rect x="986.3" y="437" width="1.2" height="15.0" fill="rgb(254,53,21)" rx="2" ry="2" />
+<text  x="989.29" y="447.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.security.UserGroupInformation.ensureInitialized (1 samples, 0.11%)</title><rect x="1182.5" y="517" width="1.3" height="15.0" fill="rgb(235,1,6)" rx="2" ry="2" />
+<text  x="1185.55" y="527.5" ></text>
+</g>
+<g >
+<title>java.util.zip.InflaterInputStream.read (1 samples, 0.11%)</title><rect x="987.5" y="437" width="1.3" height="15.0" fill="rgb(246,41,32)" rx="2" ry="2" />
+<text  x="990.54" y="447.5" ></text>
+</g>
+<g >
+<title>java.lang.String.format (3 samples, 0.32%)</title><rect x="1186.3" y="805" width="3.7" height="15.0" fill="rgb(248,201,47)" rx="2" ry="2" />
+<text  x="1189.27" y="815.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="293.2" y="549" width="1.2" height="15.0" fill="rgb(218,197,17)" rx="2" ry="2" />
+<text  x="296.20" y="559.5" ></text>
+</g>
+<g >
+<title>java.util.zip.InflaterInputStream.read (1 samples, 0.11%)</title><rect x="1180.1" y="533" width="1.2" height="15.0" fill="rgb(210,20,29)" rx="2" ry="2" />
+<text  x="1183.06" y="543.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.JavaMainApplication.start (4 samples, 0.42%)</title><rect x="985.1" y="853" width="4.9" height="15.0" fill="rgb(242,79,24)" rx="2" ry="2" />
+<text  x="988.05" y="863.5" ></text>
+</g>
+<g >
+<title>java.lang.AbstractStringBuilder.ensureCapacityInternal (2 samples, 0.21%)</title><rect x="1186.3" y="645" width="2.5" height="15.0" fill="rgb(235,150,12)" rx="2" ry="2" />
+<text  x="1189.27" y="655.5" ></text>
+</g>
+<g >
+<title>scala.collection.mutable.HashMap.foreach (1 samples, 0.11%)</title><rect x="1183.8" y="837" width="1.2" height="15.0" fill="rgb(246,166,53)" rx="2" ry="2" />
+<text  x="1186.79" y="847.5" ></text>
+</g>
+<g >
+<title>com.arcadia.notebook.NotebookSpark$.main (2 samples, 0.21%)</title><rect x="987.5" y="757" width="2.5" height="15.0" fill="rgb(205,41,16)" rx="2" ry="2" />
+<text  x="990.54" y="767.5" ></text>
+</g>
+<g >
+<title>scala.Option.foreach (1 samples, 0.11%)</title><rect x="986.3" y="629" width="1.2" height="15.0" fill="rgb(234,52,7)" rx="2" ry="2" />
+<text  x="989.29" y="639.5" ></text>
+</g>
+<g >
+<title>java.lang.ref.ReferenceQueue.remove (1 samples, 0.11%)</title><rect x="108.1" y="901" width="1.3" height="15.0" fill="rgb(250,140,41)" rx="2" ry="2" />
+<text  x="111.13" y="911.5" ></text>
+</g>
+<g >
+<title>com.uber.profiling.Agent.premain (4 samples, 0.42%)</title><rect x="1185.0" y="869" width="5.0" height="15.0" fill="rgb(219,89,41)" rx="2" ry="2" />
+<text  x="1188.03" y="879.5" ></text>
+</g>
+<g >
+<title>scala.collection.immutable.List.foreach (1 samples, 0.11%)</title><rect x="987.5" y="677" width="1.3" height="15.0" fill="rgb(210,169,49)" rx="2" ry="2" />
+<text  x="990.54" y="687.5" ></text>
+</g>
+<g >
+<title>sun.nio.ch.KQueueArrayWrapper.poll (79 samples, 8.32%)</title><rect x="10.0" y="805" width="98.1" height="15.0" fill="rgb(207,2,12)" rx="2" ry="2" />
+<text  x="13.00" y="815.5" >sun.nio.ch...</text>
+</g>
+<g >
+<title>java.util.concurrent.LinkedBlockingQueue.poll (20 samples, 2.11%)</title><rect x="109.4" y="901" width="24.8" height="15.0" fill="rgb(250,135,35)" rx="2" ry="2" />
+<text  x="112.37" y="911.5" >j..</text>
+</g>
+<g >
+<title>sun.misc.Resource.getBytes (1 samples, 0.11%)</title><rect x="1180.1" y="549" width="1.2" height="15.0" fill="rgb(218,89,37)" rx="2" ry="2" />
+<text  x="1183.06" y="559.5" ></text>
+</g>
+<g >
+<title>java.util.regex.Matcher.reset (1 samples, 0.11%)</title><rect x="1188.8" y="725" width="1.2" height="15.0" fill="rgb(211,56,43)" rx="2" ry="2" />
+<text  x="1191.76" y="735.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="987.5" y="597" width="1.3" height="15.0" fill="rgb(222,180,2)" rx="2" ry="2" />
+<text  x="990.54" y="607.5" ></text>
+</g>
+<g >
+<title>scala.Option.map (1 samples, 0.11%)</title><rect x="1182.5" y="837" width="1.3" height="15.0" fill="rgb(248,213,50)" rx="2" ry="2" />
+<text  x="1185.55" y="847.5" ></text>
+</g>
+<g >
+<title>sun.misc.Launcher$AppClassLoader.loadClass (1 samples, 0.11%)</title><rect x="985.1" y="565" width="1.2" height="15.0" fill="rgb(235,55,54)" rx="2" ry="2" />
+<text  x="988.05" y="575.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.conf.Configuration.getProps (1 samples, 0.11%)</title><rect x="1181.3" y="725" width="1.2" height="15.0" fill="rgb(250,150,29)" rx="2" ry="2" />
+<text  x="1184.31" y="735.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.util.Utils$.tryWithSafeFinallyAndFailureCallbacks (1 samples, 0.11%)</title><rect x="293.2" y="693" width="1.2" height="15.0" fill="rgb(215,211,10)" rx="2" ry="2" />
+<text  x="296.20" y="703.5" ></text>
+</g>
+<g >
+<title>java.lang.StringBuilder.append (2 samples, 0.21%)</title><rect x="1186.3" y="677" width="2.5" height="15.0" fill="rgb(214,192,14)" rx="2" ry="2" />
+<text  x="1189.27" y="687.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.conf.Configuration.getLong (1 samples, 0.11%)</title><rect x="1182.5" y="437" width="1.3" height="15.0" fill="rgb(239,229,4)" rx="2" ry="2" />
+<text  x="1185.55" y="447.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.defineClass (1 samples, 0.11%)</title><rect x="1181.3" y="325" width="1.2" height="15.0" fill="rgb(253,38,16)" rx="2" ry="2" />
+<text  x="1184.31" y="335.5" ></text>
+</g>
+<g >
+<title>java.security.AccessController.doPrivileged (1 samples, 0.11%)</title><rect x="1181.3" y="197" width="1.2" height="15.0" fill="rgb(220,5,32)" rx="2" ry="2" />
+<text  x="1184.31" y="207.5" ></text>
+</g>
+<g >
+<title>java.net.InetAddress.getLocalHost (152 samples, 16.00%)</title><rect x="991.3" y="693" width="188.8" height="15.0" fill="rgb(228,202,10)" rx="2" ry="2" />
+<text  x="994.26" y="703.5" >java.net.InetAddress.get..</text>
+</g>
+<g >
+<title>org.apache.spark.deploy.SparkSubmit.submit (161 samples, 16.95%)</title><rect x="985.1" y="901" width="199.9" height="15.0" fill="rgb(232,88,50)" rx="2" ry="2" />
+<text  x="988.05" y="911.5" >org.apache.spark.deploy.Sp..</text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="1181.3" y="261" width="1.2" height="15.0" fill="rgb(208,91,47)" rx="2" ry="2" />
+<text  x="1184.31" y="271.5" ></text>
+</g>
+<g >
+<title>java.util.zip.Inflater.inflateBytes (1 samples, 0.11%)</title><rect x="1180.1" y="501" width="1.2" height="15.0" fill="rgb(225,109,6)" rx="2" ry="2" />
+<text  x="1183.06" y="511.5" ></text>
+</g>
+<g >
+<title>scala.collection.mutable.HashTable$class.foreachEntry (1 samples, 0.11%)</title><rect x="293.2" y="837" width="1.2" height="15.0" fill="rgb(253,139,4)" rx="2" ry="2" />
+<text  x="296.20" y="847.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.conf.Configuration.loadResources (1 samples, 0.11%)</title><rect x="1181.3" y="709" width="1.2" height="15.0" fill="rgb(228,68,11)" rx="2" ry="2" />
+<text  x="1184.31" y="719.5" ></text>
+</g>
+<g >
+<title>java.util.zip.ZipFile.read (1 samples, 0.11%)</title><rect x="1181.3" y="37" width="1.2" height="15.0" fill="rgb(205,44,52)" rx="2" ry="2" />
+<text  x="1184.31" y="47.5" ></text>
+</g>
+<g >
+<title>sun.misc.Resource.getBytes (1 samples, 0.11%)</title><rect x="990.0" y="629" width="1.3" height="15.0" fill="rgb(236,222,48)" rx="2" ry="2" />
+<text  x="993.02" y="639.5" ></text>
+</g>
+<g >
+<title>java.util.concurrent.ThreadPoolExecutor$Worker.run (488 samples, 51.37%)</title><rect x="108.1" y="949" width="606.2" height="15.0" fill="rgb(239,56,15)" rx="2" ry="2" />
+<text  x="111.13" y="959.5" >java.util.concurrent.ThreadPoolExecutor$Worker.run</text>
+</g>
+<g >
+<title>java.net.URLClassLoader.findClass (1 samples, 0.11%)</title><rect x="1181.3" y="405" width="1.2" height="15.0" fill="rgb(254,149,35)" rx="2" ry="2" />
+<text  x="1184.31" y="415.5" ></text>
+</g>
+<g >
+<title>sun.misc.URLClassPath.getResource (1 samples, 0.11%)</title><rect x="293.2" y="469" width="1.2" height="15.0" fill="rgb(242,96,7)" rx="2" ry="2" />
+<text  x="296.20" y="479.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.conf.Configuration.get (1 samples, 0.11%)</title><rect x="1182.5" y="405" width="1.3" height="15.0" fill="rgb(219,55,3)" rx="2" ry="2" />
+<text  x="1185.55" y="415.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.defineClass (1 samples, 0.11%)</title><rect x="987.5" y="469" width="1.3" height="15.0" fill="rgb(247,158,9)" rx="2" ry="2" />
+<text  x="990.54" y="479.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.fs.FileSystem.get (1 samples, 0.11%)</title><rect x="1182.5" y="629" width="1.3" height="15.0" fill="rgb(235,182,7)" rx="2" ry="2" />
+<text  x="1185.55" y="639.5" ></text>
+</g>
+<g >
+<title>org.spark_project.jetty.io.SelectorManager.doStart (1 samples, 0.11%)</title><rect x="986.3" y="325" width="1.2" height="15.0" fill="rgb(250,25,19)" rx="2" ry="2" />
+<text  x="989.29" y="335.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.defineClass (1 samples, 0.11%)</title><rect x="1181.3" y="517" width="1.2" height="15.0" fill="rgb(245,191,23)" rx="2" ry="2" />
+<text  x="1184.31" y="527.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.sql.DatasetHolder.toDF (1 samples, 0.11%)</title><rect x="987.5" y="741" width="1.3" height="15.0" fill="rgb(239,61,24)" rx="2" ry="2" />
+<text  x="990.54" y="751.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.security.Groups.&lt;init&gt; (1 samples, 0.11%)</title><rect x="1182.5" y="453" width="1.3" height="15.0" fill="rgb(241,2,19)" rx="2" ry="2" />
+<text  x="1185.55" y="463.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.findClass (1 samples, 0.11%)</title><rect x="987.5" y="549" width="1.3" height="15.0" fill="rgb(249,69,42)" rx="2" ry="2" />
+<text  x="990.54" y="559.5" ></text>
+</g>
+<g >
+<title>com.mysql.cj.jdbc.AbandonedConnectionCleanupThread.run (1 samples, 0.11%)</title><rect x="108.1" y="917" width="1.3" height="15.0" fill="rgb(232,49,38)" rx="2" ry="2" />
+<text  x="111.13" y="927.5" ></text>
+</g>
+<g >
+<title>sun.misc.Launcher$AppClassLoader.loadClass (1 samples, 0.11%)</title><rect x="1181.3" y="437" width="1.2" height="15.0" fill="rgb(237,24,33)" rx="2" ry="2" />
+<text  x="1184.31" y="447.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.ui.JettyUtils$.org$apache$spark$ui$JettyUtils$$newConnector$1 (1 samples, 0.11%)</title><rect x="986.3" y="453" width="1.2" height="15.0" fill="rgb(228,169,31)" rx="2" ry="2" />
+<text  x="989.29" y="463.5" ></text>
+</g>
+<g >
+<title>org.spark_project.jetty.io.ManagedSelector.&lt;init&gt; (1 samples, 0.11%)</title><rect x="986.3" y="293" width="1.2" height="15.0" fill="rgb(240,164,28)" rx="2" ry="2" />
+<text  x="989.29" y="303.5" ></text>
+</g>
+<g >
+<title>java.lang.StringBuilder.append (2 samples, 0.21%)</title><rect x="1186.3" y="725" width="2.5" height="15.0" fill="rgb(222,35,17)" rx="2" ry="2" />
+<text  x="1189.27" y="735.5" ></text>
+</g>
+<g >
+<title>scala.reflect.internal.SymbolTable.&lt;init&gt; (1 samples, 0.11%)</title><rect x="988.8" y="693" width="1.2" height="15.0" fill="rgb(215,120,33)" rx="2" ry="2" />
+<text  x="991.78" y="703.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.defineClass (1 samples, 0.11%)</title><rect x="988.8" y="549" width="1.2" height="15.0" fill="rgb(227,156,40)" rx="2" ry="2" />
+<text  x="991.78" y="559.5" ></text>
+</g>
+<g >
+<title>org.apache.ivy.plugins.resolver.IBiblioResolver.&lt;init&gt; (152 samples, 16.00%)</title><rect x="991.3" y="789" width="188.8" height="15.0" fill="rgb(240,120,19)" rx="2" ry="2" />
+<text  x="994.26" y="799.5" >org.apache.ivy.plugins.r..</text>
+</g>
+<g >
+<title>java.net.URLClassLoader.findClass (1 samples, 0.11%)</title><rect x="1181.3" y="213" width="1.2" height="15.0" fill="rgb(230,195,53)" rx="2" ry="2" />
+<text  x="1184.31" y="223.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.access$100 (1 samples, 0.11%)</title><rect x="1180.1" y="581" width="1.2" height="15.0" fill="rgb(229,53,15)" rx="2" ry="2" />
+<text  x="1183.06" y="591.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.executor.Executor$$anonfun$org$apache$spark$executor$Executor$$updateDependencies$5.apply (1 samples, 0.11%)</title><rect x="293.2" y="773" width="1.2" height="15.0" fill="rgb(230,34,8)" rx="2" ry="2" />
+<text  x="296.20" y="783.5" ></text>
+</g>
+<g >
+<title>sun.nio.ch.SelectorImpl.select (79 samples, 8.32%)</title><rect x="10.0" y="853" width="98.1" height="15.0" fill="rgb(248,146,39)" rx="2" ry="2" />
+<text  x="13.00" y="863.5" >sun.nio.ch...</text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="986.3" y="229" width="1.2" height="15.0" fill="rgb(209,2,18)" rx="2" ry="2" />
+<text  x="989.29" y="239.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="985.1" y="501" width="1.2" height="15.0" fill="rgb(236,159,19)" rx="2" ry="2" />
+<text  x="988.05" y="511.5" ></text>
+</g>
+<g >
+<title>org.apache.xerces.jaxp.DocumentBuilderFactoryImpl.newDocumentBuilder (1 samples, 0.11%)</title><rect x="1181.3" y="677" width="1.2" height="15.0" fill="rgb(213,32,44)" rx="2" ry="2" />
+<text  x="1184.31" y="687.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="1181.3" y="613" width="1.2" height="15.0" fill="rgb(227,133,38)" rx="2" ry="2" />
+<text  x="1184.31" y="623.5" ></text>
+</g>
+<g >
+<title>com.arcadia.notebook.NotebookSpark$.&lt;clinit&gt; (2 samples, 0.21%)</title><rect x="985.1" y="757" width="2.4" height="15.0" fill="rgb(235,27,11)" rx="2" ry="2" />
+<text  x="988.05" y="767.5" ></text>
+</g>
+<g >
+<title>scala.collection.mutable.HashMap.foreachEntry (1 samples, 0.11%)</title><rect x="293.2" y="853" width="1.2" height="15.0" fill="rgb(234,53,5)" rx="2" ry="2" />
+<text  x="296.20" y="863.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.status.AppStatusStore$.createLiveStore (1 samples, 0.11%)</title><rect x="985.1" y="629" width="1.2" height="15.0" fill="rgb(209,24,7)" rx="2" ry="2" />
+<text  x="988.05" y="639.5" ></text>
+</g>
+<g >
+<title>java.util.zip.ZipFile$ZipFileInputStream.read (1 samples, 0.11%)</title><rect x="990.0" y="581" width="1.3" height="15.0" fill="rgb(240,12,17)" rx="2" ry="2" />
+<text  x="993.02" y="591.5" ></text>
+</g>
+<g >
+<title>scala.Option.getOrElse (2 samples, 0.21%)</title><rect x="1180.1" y="837" width="2.4" height="15.0" fill="rgb(232,165,43)" rx="2" ry="2" />
+<text  x="1183.06" y="847.5" ></text>
+</g>
+<g >
+<title>java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.await (338 samples, 35.58%)</title><rect x="294.4" y="885" width="419.9" height="15.0" fill="rgb(242,208,47)" rx="2" ry="2" />
+<text  x="297.44" y="895.5" >java.util.concurrent.locks.AbstractQueuedSynchronizer$Con..</text>
+</g>
+<g >
+<title>sun.misc.URLClassPath$JarLoader.getResource (1 samples, 0.11%)</title><rect x="985.1" y="453" width="1.2" height="15.0" fill="rgb(221,98,30)" rx="2" ry="2" />
+<text  x="988.05" y="463.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.conf.Configuration.loadResource (1 samples, 0.11%)</title><rect x="1181.3" y="693" width="1.2" height="15.0" fill="rgb(230,119,37)" rx="2" ry="2" />
+<text  x="1184.31" y="703.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.access$100 (1 samples, 0.11%)</title><rect x="1181.3" y="149" width="1.2" height="15.0" fill="rgb(229,37,53)" rx="2" ry="2" />
+<text  x="1184.31" y="159.5" ></text>
+</g>
+<g >
+<title>java.security.AccessController.doPrivileged (1 samples, 0.11%)</title><rect x="1183.8" y="533" width="1.2" height="15.0" fill="rgb(212,137,48)" rx="2" ry="2" />
+<text  x="1186.79" y="543.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="988.8" y="581" width="1.2" height="15.0" fill="rgb(220,174,51)" rx="2" ry="2" />
+<text  x="991.78" y="591.5" ></text>
+</g>
+<g >
+<title>java.security.AccessController.doPrivileged (1 samples, 0.11%)</title><rect x="985.1" y="517" width="1.2" height="15.0" fill="rgb(219,138,53)" rx="2" ry="2" />
+<text  x="988.05" y="527.5" ></text>
+</g>
+<g >
+<title>sun.nio.cs.StreamEncoder.flushBuffer (1 samples, 0.11%)</title><rect x="1185.0" y="741" width="1.3" height="15.0" fill="rgb(236,58,53)" rx="2" ry="2" />
+<text  x="1188.03" y="751.5" ></text>
+</g>
+<g >
+<title>java.io.PrintStream.newLine (1 samples, 0.11%)</title><rect x="1185.0" y="773" width="1.3" height="15.0" fill="rgb(252,194,21)" rx="2" ry="2" />
+<text  x="1188.03" y="783.5" ></text>
+</g>
+<g >
+<title>sun.nio.cs.StreamEncoder.implFlushBuffer (1 samples, 0.11%)</title><rect x="1185.0" y="725" width="1.3" height="15.0" fill="rgb(211,143,7)" rx="2" ry="2" />
+<text  x="1188.03" y="735.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.conf.Configuration.set (1 samples, 0.11%)</title><rect x="1181.3" y="757" width="1.2" height="15.0" fill="rgb(234,155,1)" rx="2" ry="2" />
+<text  x="1184.31" y="767.5" ></text>
+</g>
+<g >
+<title>org.spark_project.jetty.util.component.AbstractLifeCycle.start (1 samples, 0.11%)</title><rect x="986.3" y="341" width="1.2" height="15.0" fill="rgb(227,221,1)" rx="2" ry="2" />
+<text  x="989.29" y="351.5" ></text>
+</g>
+<g >
+<title>java.util.zip.ZipFile$ZipFileInflaterInputStream.fill (1 samples, 0.11%)</title><rect x="990.0" y="597" width="1.3" height="15.0" fill="rgb(207,32,13)" rx="2" ry="2" />
+<text  x="993.02" y="607.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="985.1" y="581" width="1.2" height="15.0" fill="rgb(238,198,24)" rx="2" ry="2" />
+<text  x="988.05" y="591.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.security.UserGroupInformation.getCurrentUser (1 samples, 0.11%)</title><rect x="1182.5" y="565" width="1.3" height="15.0" fill="rgb(219,111,22)" rx="2" ry="2" />
+<text  x="1185.55" y="575.5" ></text>
+</g>
+<g >
+<title>scala.collection.TraversableLike$WithFilter$$anonfun$foreach$1.apply (1 samples, 0.11%)</title><rect x="293.2" y="789" width="1.2" height="15.0" fill="rgb(245,115,37)" rx="2" ry="2" />
+<text  x="296.20" y="799.5" ></text>
+</g>
+<g >
+<title>java.io.FileOutputStream.write (1 samples, 0.11%)</title><rect x="1185.0" y="645" width="1.3" height="15.0" fill="rgb(237,87,25)" rx="2" ry="2" />
+<text  x="1188.03" y="655.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.ui.JettyUtils$$anonfun$7.apply (1 samples, 0.11%)</title><rect x="986.3" y="485" width="1.2" height="15.0" fill="rgb(217,91,2)" rx="2" ry="2" />
+<text  x="989.29" y="495.5" ></text>
+</g>
+<g >
+<title>java.lang.Class.forName (1 samples, 0.11%)</title><rect x="1180.1" y="725" width="1.2" height="15.0" fill="rgb(231,50,8)" rx="2" ry="2" />
+<text  x="1183.06" y="735.5" ></text>
+</g>
+<g >
+<title>scala.reflect.runtime.JavaUniverse.&lt;init&gt; (1 samples, 0.11%)</title><rect x="988.8" y="709" width="1.2" height="15.0" fill="rgb(246,181,6)" rx="2" ry="2" />
+<text  x="991.78" y="719.5" ></text>
+</g>
+<g >
+<title>java.util.concurrent.locks.LockSupport.parkNanos (20 samples, 2.11%)</title><rect x="109.4" y="869" width="24.8" height="15.0" fill="rgb(215,162,19)" rx="2" ry="2" />
+<text  x="112.37" y="879.5" >j..</text>
+</g>
+<g >
+<title>com.uber.profiling.AgentImpl.scheduleProfilers (4 samples, 0.42%)</title><rect x="1185.0" y="821" width="5.0" height="15.0" fill="rgb(223,90,50)" rx="2" ry="2" />
+<text  x="1188.03" y="831.5" ></text>
+</g>
+<g >
+<title>java.util.zip.ZipFile.access$1400 (1 samples, 0.11%)</title><rect x="990.0" y="565" width="1.3" height="15.0" fill="rgb(229,29,22)" rx="2" ry="2" />
+<text  x="993.02" y="575.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="985.1" y="549" width="1.2" height="15.0" fill="rgb(229,185,43)" rx="2" ry="2" />
+<text  x="988.05" y="559.5" ></text>
+</g>
+<g >
+<title>java.security.AccessController.doPrivileged (1 samples, 0.11%)</title><rect x="988.8" y="613" width="1.2" height="15.0" fill="rgb(226,24,31)" rx="2" ry="2" />
+<text  x="991.78" y="623.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.SparkSubmit$$anonfun$prepareSubmitEnvironment$3.apply (1 samples, 0.11%)</title><rect x="1182.5" y="805" width="1.3" height="15.0" fill="rgb(243,181,28)" rx="2" ry="2" />
+<text  x="1185.55" y="815.5" ></text>
+</g>
+<g >
+<title>java.lang.reflect.Method.invoke (4 samples, 0.42%)</title><rect x="985.1" y="837" width="4.9" height="15.0" fill="rgb(248,62,47)" rx="2" ry="2" />
+<text  x="988.05" y="847.5" ></text>
+</g>
+<g >
+<title>java.util.regex.Matcher.find (1 samples, 0.11%)</title><rect x="1188.8" y="741" width="1.2" height="15.0" fill="rgb(249,84,35)" rx="2" ry="2" />
+<text  x="1191.76" y="751.5" ></text>
+</g>
+<g >
+<title>scala.collection.TraversableLike$class.map (1 samples, 0.11%)</title><rect x="987.5" y="693" width="1.3" height="15.0" fill="rgb(249,58,23)" rx="2" ry="2" />
+<text  x="990.54" y="703.5" ></text>
+</g>
+<g >
+<title>sun.reflect.NativeMethodAccessorImpl.invoke (4 samples, 0.42%)</title><rect x="985.1" y="805" width="4.9" height="15.0" fill="rgb(211,174,28)" rx="2" ry="2" />
+<text  x="988.05" y="815.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.defineClass1 (1 samples, 0.11%)</title><rect x="1181.3" y="469" width="1.2" height="15.0" fill="rgb(224,164,4)" rx="2" ry="2" />
+<text  x="1184.31" y="479.5" ></text>
+</g>
+<g >
+<title>java.util.concurrent.SynchronousQueue.poll (128 samples, 13.47%)</title><rect x="134.2" y="901" width="159.0" height="15.0" fill="rgb(220,48,41)" rx="2" ry="2" />
+<text  x="137.21" y="911.5" >java.util.concurrent..</text>
+</g>
+<g >
+<title>java.util.zip.ZipFile.read (1 samples, 0.11%)</title><rect x="987.5" y="373" width="1.3" height="15.0" fill="rgb(230,151,39)" rx="2" ry="2" />
+<text  x="990.54" y="383.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.defineClass (1 samples, 0.11%)</title><rect x="986.3" y="101" width="1.2" height="15.0" fill="rgb(252,2,4)" rx="2" ry="2" />
+<text  x="989.29" y="111.5" ></text>
+</g>
+<g >
+<title>sun.misc.Resource.getBytes (1 samples, 0.11%)</title><rect x="987.5" y="453" width="1.3" height="15.0" fill="rgb(218,126,32)" rx="2" ry="2" />
+<text  x="990.54" y="463.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="986.3" y="181" width="1.2" height="15.0" fill="rgb(216,31,45)" rx="2" ry="2" />
+<text  x="989.29" y="191.5" ></text>
+</g>
+<g >
+<title>java.util.zip.ZipFile.access$1400 (1 samples, 0.11%)</title><rect x="987.5" y="389" width="1.3" height="15.0" fill="rgb(253,214,39)" rx="2" ry="2" />
+<text  x="990.54" y="399.5" ></text>
+</g>
+<g >
+<title>java.util.Formatter$FixedString.print (2 samples, 0.21%)</title><rect x="1186.3" y="757" width="2.5" height="15.0" fill="rgb(217,182,2)" rx="2" ry="2" />
+<text  x="1189.27" y="767.5" ></text>
+</g>
+<g >
+<title>io.netty.channel.nio.NioEventLoop.run (79 samples, 8.32%)</title><rect x="10.0" y="901" width="98.1" height="15.0" fill="rgb(245,207,39)" rx="2" ry="2" />
+<text  x="13.00" y="911.5" >io.netty.ch..</text>
+</g>
+<g >
+<title>org.apache.spark.util.Utils$.startServiceOnPort (1 samples, 0.11%)</title><rect x="986.3" y="549" width="1.2" height="15.0" fill="rgb(231,70,14)" rx="2" ry="2" />
+<text  x="989.29" y="559.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.SparkSubmit$.main (161 samples, 16.95%)</title><rect x="985.1" y="949" width="199.9" height="15.0" fill="rgb(223,46,35)" rx="2" ry="2" />
+<text  x="988.05" y="959.5" >org.apache.spark.deploy.Sp..</text>
+</g>
+<g >
+<title>java.net.URLClassLoader.access$100 (1 samples, 0.11%)</title><rect x="1181.3" y="341" width="1.2" height="15.0" fill="rgb(253,219,34)" rx="2" ry="2" />
+<text  x="1184.31" y="351.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="1181.3" y="229" width="1.2" height="15.0" fill="rgb(211,33,42)" rx="2" ry="2" />
+<text  x="1184.31" y="239.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.SparkSubmit$$anonfun$prepareSubmitEnvironment$1.apply (1 samples, 0.11%)</title><rect x="1183.8" y="741" width="1.2" height="15.0" fill="rgb(225,87,46)" rx="2" ry="2" />
+<text  x="1186.79" y="751.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="987.5" y="517" width="1.3" height="15.0" fill="rgb(220,2,16)" rx="2" ry="2" />
+<text  x="990.54" y="527.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.conf.Configuration.getProps (1 samples, 0.11%)</title><rect x="1182.5" y="389" width="1.3" height="15.0" fill="rgb(246,40,9)" rx="2" ry="2" />
+<text  x="1185.55" y="399.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="1181.3" y="645" width="1.2" height="15.0" fill="rgb(244,64,53)" rx="2" ry="2" />
+<text  x="1184.31" y="655.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="1181.3" y="453" width="1.2" height="15.0" fill="rgb(214,188,23)" rx="2" ry="2" />
+<text  x="1184.31" y="463.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.SparkSubmit.doRunMain$1 (161 samples, 16.95%)</title><rect x="985.1" y="885" width="199.9" height="15.0" fill="rgb(247,202,30)" rx="2" ry="2" />
+<text  x="988.05" y="895.5" >org.apache.spark.deploy.Sp..</text>
+</g>
+<g >
+<title>scala.collection.mutable.WrappedArray.foreach (1 samples, 0.11%)</title><rect x="1182.5" y="741" width="1.3" height="15.0" fill="rgb(254,134,3)" rx="2" ry="2" />
+<text  x="1185.55" y="751.5" ></text>
+</g>
+<g >
+<title>java.util.zip.InflaterInputStream.read (1 samples, 0.11%)</title><rect x="1181.3" y="101" width="1.2" height="15.0" fill="rgb(244,145,21)" rx="2" ry="2" />
+<text  x="1184.31" y="111.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.security.Groups.&lt;init&gt; (1 samples, 0.11%)</title><rect x="1182.5" y="469" width="1.3" height="15.0" fill="rgb(248,134,32)" rx="2" ry="2" />
+<text  x="1185.55" y="479.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.executor.Executor$TaskRunner.run (1 samples, 0.11%)</title><rect x="293.2" y="917" width="1.2" height="15.0" fill="rgb(215,110,16)" rx="2" ry="2" />
+<text  x="296.20" y="927.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.SparkSubmit.prepareSubmitEnvironment (157 samples, 16.53%)</title><rect x="990.0" y="853" width="195.0" height="15.0" fill="rgb(229,75,46)" rx="2" ry="2" />
+<text  x="993.02" y="863.5" >org.apache.spark.deploy.S..</text>
+</g>
+<g >
+<title>java.net.InetAddress.getAddressesFromNameService (152 samples, 16.00%)</title><rect x="991.3" y="677" width="188.8" height="15.0" fill="rgb(216,141,30)" rx="2" ry="2" />
+<text  x="994.26" y="687.5" >java.net.InetAddress.get..</text>
+</g>
+<g >
+<title>org.apache.spark.deploy.DependencyUtils$.resolveGlobPaths (1 samples, 0.11%)</title><rect x="1182.5" y="789" width="1.3" height="15.0" fill="rgb(216,144,6)" rx="2" ry="2" />
+<text  x="1185.55" y="799.5" ></text>
+</g>
+<g >
+<title>java.util.zip.ZipFile.access$1400 (1 samples, 0.11%)</title><rect x="1183.8" y="389" width="1.2" height="15.0" fill="rgb(240,141,1)" rx="2" ry="2" />
+<text  x="1186.79" y="399.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.conf.Configuration.set (1 samples, 0.11%)</title><rect x="1181.3" y="741" width="1.2" height="15.0" fill="rgb(205,193,9)" rx="2" ry="2" />
+<text  x="1184.31" y="751.5" ></text>
+</g>
+<g >
+<title>java.util.zip.Inflater.inflateBytes (1 samples, 0.11%)</title><rect x="988.8" y="485" width="1.2" height="15.0" fill="rgb(246,186,4)" rx="2" ry="2" />
+<text  x="991.78" y="495.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.sql.Dataset$$anonfun$16.apply (1 samples, 0.11%)</title><rect x="987.5" y="613" width="1.3" height="15.0" fill="rgb(211,16,52)" rx="2" ry="2" />
+<text  x="990.54" y="623.5" ></text>
+</g>
+<g >
+<title>java.util.zip.ZipFile$ZipFileInflaterInputStream.fill (1 samples, 0.11%)</title><rect x="1183.8" y="421" width="1.2" height="15.0" fill="rgb(233,80,42)" rx="2" ry="2" />
+<text  x="1186.79" y="431.5" ></text>
+</g>
+<g >
+<title>org.apache.ivy.plugins.resolver.RepositoryResolver.&lt;init&gt; (152 samples, 16.00%)</title><rect x="991.3" y="757" width="188.8" height="15.0" fill="rgb(216,10,16)" rx="2" ry="2" />
+<text  x="994.26" y="767.5" >org.apache.ivy.plugins.r..</text>
+</g>
+<g >
+<title>sun.reflect.NativeMethodAccessorImpl.invoke (4 samples, 0.42%)</title><rect x="1185.0" y="901" width="5.0" height="15.0" fill="rgb(237,141,40)" rx="2" ry="2" />
+<text  x="1188.03" y="911.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.sql.SparkSession$Builder$$anonfun$7.apply (2 samples, 0.21%)</title><rect x="985.1" y="693" width="2.4" height="15.0" fill="rgb(226,106,43)" rx="2" ry="2" />
+<text  x="988.05" y="703.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.status.ElementTrackingStore.addTrigger (1 samples, 0.11%)</title><rect x="985.1" y="597" width="1.2" height="15.0" fill="rgb(246,186,25)" rx="2" ry="2" />
+<text  x="988.05" y="607.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="1183.8" y="501" width="1.2" height="15.0" fill="rgb(231,183,0)" rx="2" ry="2" />
+<text  x="1186.79" y="511.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.SparkConf.set (1 samples, 0.11%)</title><rect x="1183.8" y="709" width="1.2" height="15.0" fill="rgb(220,109,43)" rx="2" ry="2" />
+<text  x="1186.79" y="719.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.findClass (1 samples, 0.11%)</title><rect x="1180.1" y="645" width="1.2" height="15.0" fill="rgb(238,145,45)" rx="2" ry="2" />
+<text  x="1183.06" y="655.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="293.2" y="485" width="1.2" height="15.0" fill="rgb(234,95,53)" rx="2" ry="2" />
+<text  x="296.20" y="495.5" ></text>
+</g>
+<g >
+<title>java.security.AccessController.doPrivileged (1 samples, 0.11%)</title><rect x="986.3" y="197" width="1.2" height="15.0" fill="rgb(211,26,53)" rx="2" ry="2" />
+<text  x="989.29" y="207.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.fs.FileSystem$Cache$Key.&lt;init&gt; (1 samples, 0.11%)</title><rect x="1182.5" y="597" width="1.3" height="15.0" fill="rgb(219,196,45)" rx="2" ry="2" />
+<text  x="1185.55" y="607.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="990.0" y="677" width="1.3" height="15.0" fill="rgb(235,44,44)" rx="2" ry="2" />
+<text  x="993.02" y="687.5" ></text>
+</g>
+<g >
+<title>scala.collection.mutable.HashMap$$anonfun$foreach$1.apply (1 samples, 0.11%)</title><rect x="1183.8" y="773" width="1.2" height="15.0" fill="rgb(206,19,8)" rx="2" ry="2" />
+<text  x="1186.79" y="783.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="985.1" y="485" width="1.2" height="15.0" fill="rgb(249,44,41)" rx="2" ry="2" />
+<text  x="988.05" y="495.5" ></text>
+</g>
+<g >
+<title>org.spark_project.jetty.server.AbstractNetworkConnector.doStart (1 samples, 0.11%)</title><rect x="986.3" y="405" width="1.2" height="15.0" fill="rgb(209,221,40)" rx="2" ry="2" />
+<text  x="989.29" y="415.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.findClass (1 samples, 0.11%)</title><rect x="985.1" y="533" width="1.2" height="15.0" fill="rgb(219,169,8)" rx="2" ry="2" />
+<text  x="988.05" y="543.5" ></text>
+</g>
+<g >
+<title>sun.reflect.DelegatingMethodAccessorImpl.invoke (4 samples, 0.42%)</title><rect x="1185.0" y="917" width="5.0" height="15.0" fill="rgb(213,140,49)" rx="2" ry="2" />
+<text  x="1188.03" y="927.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.DependencyUtils$$anonfun$resolveGlobPaths$2.apply (1 samples, 0.11%)</title><rect x="1182.5" y="677" width="1.3" height="15.0" fill="rgb(250,34,7)" rx="2" ry="2" />
+<text  x="1185.55" y="687.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.SparkSubmit$$anonfun$2.apply (2 samples, 0.21%)</title><rect x="1180.1" y="821" width="2.4" height="15.0" fill="rgb(253,149,34)" rx="2" ry="2" />
+<text  x="1183.06" y="831.5" ></text>
+</g>
+<g >
+<title>java.util.concurrent.ThreadPoolExecutor.runWorker (488 samples, 51.37%)</title><rect x="108.1" y="933" width="606.2" height="15.0" fill="rgb(252,85,42)" rx="2" ry="2" />
+<text  x="111.13" y="943.5" >java.util.concurrent.ThreadPoolExecutor.runWorker</text>
+</g>
+<g >
+<title>java.net.URLClassLoader.findClass (1 samples, 0.11%)</title><rect x="988.8" y="629" width="1.2" height="15.0" fill="rgb(206,103,2)" rx="2" ry="2" />
+<text  x="991.78" y="639.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.rpc.netty.Dispatcher$MessageLoop.run (338 samples, 35.58%)</title><rect x="294.4" y="917" width="419.9" height="15.0" fill="rgb(250,2,12)" rx="2" ry="2" />
+<text  x="297.44" y="927.5" >org.apache.spark.rpc.netty.Dispatcher$MessageLoop.run</text>
+</g>
+<g >
+<title>org.apache.spark.deploy.SparkSubmit.main (161 samples, 16.95%)</title><rect x="985.1" y="965" width="199.9" height="15.0" fill="rgb(216,2,16)" rx="2" ry="2" />
+<text  x="988.05" y="975.5" >org.apache.spark.deploy.Sp..</text>
+</g>
+<g >
+<title>java.util.jar.JarFile.getEntry (1 samples, 0.11%)</title><rect x="985.1" y="421" width="1.2" height="15.0" fill="rgb(213,202,44)" rx="2" ry="2" />
+<text  x="988.05" y="431.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.defineClass (1 samples, 0.11%)</title><rect x="986.3" y="133" width="1.2" height="15.0" fill="rgb(248,136,3)" rx="2" ry="2" />
+<text  x="989.29" y="143.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="1181.3" y="565" width="1.2" height="15.0" fill="rgb(217,113,51)" rx="2" ry="2" />
+<text  x="1184.31" y="575.5" ></text>
+</g>
+<g >
+<title>scala.collection.TraversableLike$WithFilter.foreach (1 samples, 0.11%)</title><rect x="293.2" y="885" width="1.2" height="15.0" fill="rgb(220,220,41)" rx="2" ry="2" />
+<text  x="296.20" y="895.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="1181.3" y="549" width="1.2" height="15.0" fill="rgb(215,129,40)" rx="2" ry="2" />
+<text  x="1184.31" y="559.5" ></text>
+</g>
+<g >
+<title>java.lang.AbstractStringBuilder.append (2 samples, 0.21%)</title><rect x="1186.3" y="709" width="2.5" height="15.0" fill="rgb(232,135,9)" rx="2" ry="2" />
+<text  x="1189.27" y="719.5" ></text>
+</g>
+<g >
+<title>java.io.FileOutputStream.writeBytes (1 samples, 0.11%)</title><rect x="1185.0" y="629" width="1.3" height="15.0" fill="rgb(222,219,32)" rx="2" ry="2" />
+<text  x="1188.03" y="639.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.SparkContext.&lt;init&gt; (2 samples, 0.21%)</title><rect x="985.1" y="645" width="2.4" height="15.0" fill="rgb(208,11,52)" rx="2" ry="2" />
+<text  x="988.05" y="655.5" ></text>
+</g>
+<g >
+<title>sun.reflect.NativeMethodAccessorImpl.invoke0 (4 samples, 0.42%)</title><rect x="1185.0" y="885" width="5.0" height="15.0" fill="rgb(227,132,50)" rx="2" ry="2" />
+<text  x="1188.03" y="895.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.sql.Dataset$$anonfun$16.apply (1 samples, 0.11%)</title><rect x="987.5" y="629" width="1.3" height="15.0" fill="rgb(212,136,11)" rx="2" ry="2" />
+<text  x="990.54" y="639.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.SparkConf$.&lt;clinit&gt; (1 samples, 0.11%)</title><rect x="1183.8" y="693" width="1.2" height="15.0" fill="rgb(234,177,43)" rx="2" ry="2" />
+<text  x="1186.79" y="703.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.util.Utils$$anonfun$startServiceOnPort$1.apply$mcVI$sp (1 samples, 0.11%)</title><rect x="986.3" y="517" width="1.2" height="15.0" fill="rgb(241,18,53)" rx="2" ry="2" />
+<text  x="989.29" y="527.5" ></text>
+</g>
+<g >
+<title>scala.collection.mutable.HashMap$$anonfun$foreach$1.apply (1 samples, 0.11%)</title><rect x="293.2" y="821" width="1.2" height="15.0" fill="rgb(243,205,40)" rx="2" ry="2" />
+<text  x="296.20" y="831.5" ></text>
+</g>
+<g >
+<title>java.util.Formatter.parse (1 samples, 0.11%)</title><rect x="1188.8" y="757" width="1.2" height="15.0" fill="rgb(250,48,50)" rx="2" ry="2" />
+<text  x="1191.76" y="767.5" ></text>
+</g>
+<g >
+<title>java.util.zip.ZipFile$ZipFileInputStream.read (1 samples, 0.11%)</title><rect x="1183.8" y="405" width="1.2" height="15.0" fill="rgb(234,225,23)" rx="2" ry="2" />
+<text  x="1186.79" y="415.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.executor.Executor.org$apache$spark$executor$Executor$$updateDependencies (1 samples, 0.11%)</title><rect x="293.2" y="901" width="1.2" height="15.0" fill="rgb(208,83,51)" rx="2" ry="2" />
+<text  x="296.20" y="911.5" ></text>
+</g>
+<g >
+<title>java.util.zip.Inflater.inflate (1 samples, 0.11%)</title><rect x="1180.1" y="517" width="1.2" height="15.0" fill="rgb(239,156,26)" rx="2" ry="2" />
+<text  x="1183.06" y="527.5" ></text>
+</g>
+<g >
+<title>org.spark_project.jetty.util.thread.ExecutionStrategy$DefaultExecutionStrategyFactory.newExecutionStrategy (1 samples, 0.11%)</title><rect x="986.3" y="277" width="1.2" height="15.0" fill="rgb(219,214,50)" rx="2" ry="2" />
+<text  x="989.29" y="287.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.SparkHadoopUtil$.newConfiguration (2 samples, 0.21%)</title><rect x="1180.1" y="789" width="2.4" height="15.0" fill="rgb(242,212,4)" rx="2" ry="2" />
+<text  x="1183.06" y="799.5" ></text>
+</g>
+<g >
+<title>sun.misc.URLClassPath.getResource (1 samples, 0.11%)</title><rect x="985.1" y="469" width="1.2" height="15.0" fill="rgb(218,119,54)" rx="2" ry="2" />
+<text  x="988.05" y="479.5" ></text>
+</g>
+<g >
+<title>scala.collection.mutable.HashMap$$anonfun$foreach$1.apply (1 samples, 0.11%)</title><rect x="293.2" y="805" width="1.2" height="15.0" fill="rgb(235,91,51)" rx="2" ry="2" />
+<text  x="296.20" y="815.5" ></text>
+</g>
+<g >
+<title>scala.collection.TraversableLike$$anonfun$flatMap$1.apply (1 samples, 0.11%)</title><rect x="1182.5" y="709" width="1.3" height="15.0" fill="rgb(218,179,23)" rx="2" ry="2" />
+<text  x="1185.55" y="719.5" ></text>
+</g>
+<g >
+<title>java.security.AccessController.doPrivileged (1 samples, 0.11%)</title><rect x="293.2" y="517" width="1.2" height="15.0" fill="rgb(214,166,48)" rx="2" ry="2" />
+<text  x="296.20" y="527.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="988.8" y="645" width="1.2" height="15.0" fill="rgb(222,130,50)" rx="2" ry="2" />
+<text  x="991.78" y="655.5" ></text>
+</g>
+<g >
+<title>sun.misc.Unsafe.park (338 samples, 35.58%)</title><rect x="294.4" y="853" width="419.9" height="15.0" fill="rgb(242,210,22)" rx="2" ry="2" />
+<text  x="297.44" y="863.5" >sun.misc.Unsafe.park</text>
+</g>
+<g >
+<title>sun.reflect.NativeMethodAccessorImpl.invoke0 (4 samples, 0.42%)</title><rect x="985.1" y="789" width="4.9" height="15.0" fill="rgb(220,226,1)" rx="2" ry="2" />
+<text  x="988.05" y="799.5" ></text>
+</g>
+<g >
+<title>org.spark_project.jetty.util.component.ContainerLifeCycle.start (1 samples, 0.11%)</title><rect x="986.3" y="357" width="1.2" height="15.0" fill="rgb(224,224,27)" rx="2" ry="2" />
+<text  x="989.29" y="367.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.history.config$.&lt;clinit&gt; (1 samples, 0.11%)</title><rect x="1183.8" y="661" width="1.2" height="15.0" fill="rgb(227,144,47)" rx="2" ry="2" />
+<text  x="1186.79" y="671.5" ></text>
+</g>
+<g >
+<title>java.lang.Thread.run (567 samples, 59.68%)</title><rect x="10.0" y="965" width="704.3" height="15.0" fill="rgb(228,161,51)" rx="2" ry="2" />
+<text  x="13.00" y="975.5" >java.lang.Thread.run</text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="986.3" y="165" width="1.2" height="15.0" fill="rgb(225,0,34)" rx="2" ry="2" />
+<text  x="989.29" y="175.5" ></text>
+</g>
+<g >
+<title>java.util.Formatter.format (3 samples, 0.32%)</title><rect x="1186.3" y="773" width="3.7" height="15.0" fill="rgb(242,192,49)" rx="2" ry="2" />
+<text  x="1189.27" y="783.5" ></text>
+</g>
+<g >
+<title>com.arcadia.notebook.NotebookSpark$.&lt;init&gt; (2 samples, 0.21%)</title><rect x="985.1" y="741" width="2.4" height="15.0" fill="rgb(252,133,22)" rx="2" ry="2" />
+<text  x="988.05" y="751.5" ></text>
+</g>
+<g >
+<title>org.apache.ivy.core.settings.IvySettings.&lt;init&gt; (1 samples, 0.11%)</title><rect x="990.0" y="805" width="1.3" height="15.0" fill="rgb(224,178,6)" rx="2" ry="2" />
+<text  x="993.02" y="815.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.rpc.netty.NettyRpcEnv$$anonfun$openChannel$1.apply (1 samples, 0.11%)</title><rect x="293.2" y="677" width="1.2" height="15.0" fill="rgb(247,172,41)" rx="2" ry="2" />
+<text  x="296.20" y="687.5" ></text>
+</g>
+<g >
+<title>sun.misc.Launcher$AppClassLoader.loadClass (1 samples, 0.11%)</title><rect x="987.5" y="581" width="1.3" height="15.0" fill="rgb(208,181,33)" rx="2" ry="2" />
+<text  x="990.54" y="591.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.SparkContext$$anonfun$11.apply (1 samples, 0.11%)</title><rect x="986.3" y="597" width="1.2" height="15.0" fill="rgb(209,134,27)" rx="2" ry="2" />
+<text  x="989.29" y="607.5" ></text>
+</g>
+<g >
+<title>java.util.Arrays.copyOf (2 samples, 0.21%)</title><rect x="1186.3" y="629" width="2.5" height="15.0" fill="rgb(224,5,53)" rx="2" ry="2" />
+<text  x="1189.27" y="639.5" ></text>
+</g>
+<g >
+<title>scala.collection.TraversableLike$$anonfun$map$1.apply (1 samples, 0.11%)</title><rect x="987.5" y="645" width="1.3" height="15.0" fill="rgb(223,164,50)" rx="2" ry="2" />
+<text  x="990.54" y="655.5" ></text>
+</g>
+<g >
+<title>java.io.OutputStreamWriter.flushBuffer (1 samples, 0.11%)</title><rect x="1185.0" y="757" width="1.3" height="15.0" fill="rgb(230,116,40)" rx="2" ry="2" />
+<text  x="1188.03" y="767.5" ></text>
+</g>
+<g >
+<title>sun.misc.Launcher$AppClassLoader.loadClass (1 samples, 0.11%)</title><rect x="990.0" y="757" width="1.3" height="15.0" fill="rgb(249,185,13)" rx="2" ry="2" />
+<text  x="993.02" y="767.5" ></text>
+</g>
+<g >
+<title>sun.nio.ch.SelectorImpl.lockAndDoSelect (79 samples, 8.32%)</title><rect x="10.0" y="837" width="98.1" height="15.0" fill="rgb(241,88,15)" rx="2" ry="2" />
+<text  x="13.00" y="847.5" >sun.nio.ch...</text>
+</g>
+<g >
+<title>java.util.zip.ZipFile.getEntry (1 samples, 0.11%)</title><rect x="293.2" y="405" width="1.2" height="15.0" fill="rgb(248,77,14)" rx="2" ry="2" />
+<text  x="296.20" y="415.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.access$100 (1 samples, 0.11%)</title><rect x="990.0" y="661" width="1.3" height="15.0" fill="rgb(209,15,26)" rx="2" ry="2" />
+<text  x="993.02" y="671.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.sql.Dataset.toDF (1 samples, 0.11%)</title><rect x="987.5" y="725" width="1.3" height="15.0" fill="rgb(239,226,3)" rx="2" ry="2" />
+<text  x="990.54" y="735.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.ui.JettyUtils$.org$apache$spark$ui$JettyUtils$$httpConnect$1 (1 samples, 0.11%)</title><rect x="986.3" y="469" width="1.2" height="15.0" fill="rgb(212,137,3)" rx="2" ry="2" />
+<text  x="989.29" y="479.5" ></text>
+</g>
+<g >
+<title>java.io.BufferedOutputStream.flushBuffer (1 samples, 0.11%)</title><rect x="1185.0" y="661" width="1.3" height="15.0" fill="rgb(213,224,46)" rx="2" ry="2" />
+<text  x="1188.03" y="671.5" ></text>
+</g>
+<g >
+<title>scala.collection.AbstractTraversable.flatMap (1 samples, 0.11%)</title><rect x="1182.5" y="773" width="1.3" height="15.0" fill="rgb(233,81,2)" rx="2" ry="2" />
+<text  x="1185.55" y="783.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.SparkSubmitUtils$.createRepoResolvers (152 samples, 16.00%)</title><rect x="991.3" y="805" width="188.8" height="15.0" fill="rgb(212,47,27)" rx="2" ry="2" />
+<text  x="994.26" y="815.5" >org.apache.spark.deploy...</text>
+</g>
+<g >
+<title>java.util.jar.JarFile.getEntry (1 samples, 0.11%)</title><rect x="293.2" y="421" width="1.2" height="15.0" fill="rgb(218,94,32)" rx="2" ry="2" />
+<text  x="296.20" y="431.5" ></text>
+</g>
+<g >
+<title>scala.collection.mutable.HashMap.foreachEntry (1 samples, 0.11%)</title><rect x="1183.8" y="821" width="1.2" height="15.0" fill="rgb(244,28,12)" rx="2" ry="2" />
+<text  x="1186.79" y="831.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.rpc.netty.NettyRpcEnv.openChannel (1 samples, 0.11%)</title><rect x="293.2" y="709" width="1.2" height="15.0" fill="rgb(229,153,26)" rx="2" ry="2" />
+<text  x="296.20" y="719.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="990.0" y="693" width="1.3" height="15.0" fill="rgb(245,177,48)" rx="2" ry="2" />
+<text  x="993.02" y="703.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.access$100 (1 samples, 0.11%)</title><rect x="987.5" y="485" width="1.3" height="15.0" fill="rgb(232,35,24)" rx="2" ry="2" />
+<text  x="990.54" y="495.5" ></text>
+</g>
+<g >
+<title>java.io.BufferedOutputStream.flush (1 samples, 0.11%)</title><rect x="1185.0" y="677" width="1.3" height="15.0" fill="rgb(252,61,41)" rx="2" ry="2" />
+<text  x="1188.03" y="687.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="990.0" y="741" width="1.3" height="15.0" fill="rgb(239,193,41)" rx="2" ry="2" />
+<text  x="993.02" y="751.5" ></text>
+</g>
+<g >
+<title>java.util.jar.JarFile.getJarEntry (1 samples, 0.11%)</title><rect x="293.2" y="437" width="1.2" height="15.0" fill="rgb(212,42,0)" rx="2" ry="2" />
+<text  x="296.20" y="447.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="986.3" y="261" width="1.2" height="15.0" fill="rgb(248,143,49)" rx="2" ry="2" />
+<text  x="989.29" y="271.5" ></text>
+</g>
+<g >
+<title>java.security.AccessController.doPrivileged (1 samples, 0.11%)</title><rect x="1181.3" y="581" width="1.2" height="15.0" fill="rgb(231,84,33)" rx="2" ry="2" />
+<text  x="1184.31" y="591.5" ></text>
+</g>
+<g >
+<title>sun.misc.URLClassPath$JarLoader.getResource (1 samples, 0.11%)</title><rect x="293.2" y="453" width="1.2" height="15.0" fill="rgb(230,206,19)" rx="2" ry="2" />
+<text  x="296.20" y="463.5" ></text>
+</g>
+<g >
+<title>java.security.SecureClassLoader.defineClass (1 samples, 0.11%)</title><rect x="1181.3" y="501" width="1.2" height="15.0" fill="rgb(243,54,45)" rx="2" ry="2" />
+<text  x="1184.31" y="511.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.history.config$.&lt;init&gt; (1 samples, 0.11%)</title><rect x="1183.8" y="645" width="1.2" height="15.0" fill="rgb(245,140,51)" rx="2" ry="2" />
+<text  x="1186.79" y="655.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.conf.Configuration.loadResource (1 samples, 0.11%)</title><rect x="1182.5" y="357" width="1.3" height="15.0" fill="rgb(208,174,2)" rx="2" ry="2" />
+<text  x="1185.55" y="367.5" ></text>
+</g>
+<g >
+<title>java.util.zip.ZipFile.access$1400 (1 samples, 0.11%)</title><rect x="1181.3" y="53" width="1.2" height="15.0" fill="rgb(205,197,22)" rx="2" ry="2" />
+<text  x="1184.31" y="63.5" ></text>
+</g>
+<g >
+<title>java.lang.ref.Finalizer$FinalizerThread.run (218 samples, 22.95%)</title><rect x="714.3" y="965" width="270.8" height="15.0" fill="rgb(218,96,53)" rx="2" ry="2" />
+<text  x="717.27" y="975.5" >java.lang.ref.Finalizer$FinalizerThr..</text>
+</g>
+<g >
+<title>scala.reflect.runtime.package$.universe$lzycompute (1 samples, 0.11%)</title><rect x="988.8" y="725" width="1.2" height="15.0" fill="rgb(207,131,17)" rx="2" ry="2" />
+<text  x="991.78" y="735.5" ></text>
+</g>
+<g >
+<title>java.lang.ref.ReferenceQueue.remove (218 samples, 22.95%)</title><rect x="714.3" y="949" width="270.8" height="15.0" fill="rgb(253,117,48)" rx="2" ry="2" />
+<text  x="717.27" y="959.5" >java.lang.ref.ReferenceQueue.remove</text>
+</g>
+<g >
+<title>org.apache.spark.ui.WebUI.bind (1 samples, 0.11%)</title><rect x="986.3" y="581" width="1.2" height="15.0" fill="rgb(232,226,21)" rx="2" ry="2" />
+<text  x="989.29" y="591.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="1180.1" y="613" width="1.2" height="15.0" fill="rgb(216,189,15)" rx="2" ry="2" />
+<text  x="1183.06" y="623.5" ></text>
+</g>
+<g >
+<title>org.apache.ivy.plugins.resolver.BasicResolver.&lt;init&gt; (152 samples, 16.00%)</title><rect x="991.3" y="725" width="188.8" height="15.0" fill="rgb(232,136,24)" rx="2" ry="2" />
+<text  x="994.26" y="735.5" >org.apache.ivy.plugins.r..</text>
+</g>
+<g >
+<title>java.net.URLClassLoader.defineClass (1 samples, 0.11%)</title><rect x="1181.3" y="133" width="1.2" height="15.0" fill="rgb(221,170,17)" rx="2" ry="2" />
+<text  x="1184.31" y="143.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.SparkSubmitUtils$.buildIvySettings (153 samples, 16.11%)</title><rect x="990.0" y="821" width="190.1" height="15.0" fill="rgb(226,204,54)" rx="2" ry="2" />
+<text  x="993.02" y="831.5" >org.apache.spark.deploy...</text>
+</g>
+<g >
+<title>all (950 samples, 100%)</title><rect x="10.0" y="981" width="1180.0" height="15.0" fill="rgb(230,103,32)" rx="2" ry="2" />
+<text  x="13.00" y="991.5" ></text>
+</g>
+<g >
+<title>java.lang.AbstractStringBuilder.append (2 samples, 0.21%)</title><rect x="1186.3" y="661" width="2.5" height="15.0" fill="rgb(206,76,29)" rx="2" ry="2" />
+<text  x="1189.27" y="671.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="987.5" y="501" width="1.3" height="15.0" fill="rgb(213,60,36)" rx="2" ry="2" />
+<text  x="990.54" y="511.5" ></text>
+</g>
+<g >
+<title>java.lang.ref.ReferenceQueue.remove (218 samples, 22.95%)</title><rect x="714.3" y="933" width="270.8" height="15.0" fill="rgb(208,37,21)" rx="2" ry="2" />
+<text  x="717.27" y="943.5" >java.lang.ref.ReferenceQueue.remove</text>
+</g>
+<g >
+<title>scala.collection.TraversableLike$class.flatMap (1 samples, 0.11%)</title><rect x="1182.5" y="757" width="1.3" height="15.0" fill="rgb(224,216,0)" rx="2" ry="2" />
+<text  x="1185.55" y="767.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="293.2" y="501" width="1.2" height="15.0" fill="rgb(234,74,18)" rx="2" ry="2" />
+<text  x="296.20" y="511.5" ></text>
+</g>
+<g >
+<title>java.lang.Object.wait (218 samples, 22.95%)</title><rect x="714.3" y="917" width="270.8" height="15.0" fill="rgb(208,74,27)" rx="2" ry="2" />
+<text  x="717.27" y="927.5" >java.lang.Object.wait</text>
+</g>
+<g >
+<title>org.apache.spark.network.client.TransportClientFactory$ClientPool.&lt;init&gt; (1 samples, 0.11%)</title><rect x="293.2" y="597" width="1.2" height="15.0" fill="rgb(239,79,54)" rx="2" ry="2" />
+<text  x="296.20" y="607.5" ></text>
+</g>
+<g >
+<title>com.uber.profiling.AgentImpl.startProfilers (4 samples, 0.42%)</title><rect x="1185.0" y="837" width="5.0" height="15.0" fill="rgb(217,155,53)" rx="2" ry="2" />
+<text  x="1188.03" y="847.5" ></text>
+</g>
+<g >
+<title>org.spark_project.jetty.util.component.ContainerLifeCycle.doStart (1 samples, 0.11%)</title><rect x="986.3" y="373" width="1.2" height="15.0" fill="rgb(252,102,12)" rx="2" ry="2" />
+<text  x="989.29" y="383.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.SparkConf.set (1 samples, 0.11%)</title><rect x="1183.8" y="725" width="1.2" height="15.0" fill="rgb(208,11,22)" rx="2" ry="2" />
+<text  x="1186.79" y="735.5" ></text>
+</g>
+<g >
+<title>java.lang.Class.forName0 (1 samples, 0.11%)</title><rect x="1180.1" y="709" width="1.2" height="15.0" fill="rgb(227,43,12)" rx="2" ry="2" />
+<text  x="1183.06" y="719.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.status.AppStatusListener.&lt;init&gt; (1 samples, 0.11%)</title><rect x="985.1" y="613" width="1.2" height="15.0" fill="rgb(250,67,11)" rx="2" ry="2" />
+<text  x="988.05" y="623.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="1180.1" y="693" width="1.2" height="15.0" fill="rgb(226,218,27)" rx="2" ry="2" />
+<text  x="1183.06" y="703.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="1183.8" y="565" width="1.2" height="15.0" fill="rgb(247,90,31)" rx="2" ry="2" />
+<text  x="1186.79" y="575.5" ></text>
+</g>
+<g >
+<title>scala.reflect.runtime.package$.universe (1 samples, 0.11%)</title><rect x="988.8" y="741" width="1.2" height="15.0" fill="rgb(209,10,40)" rx="2" ry="2" />
+<text  x="991.78" y="751.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.SparkSubmit$$anonfun$prepareSubmitEnvironment$3.apply (1 samples, 0.11%)</title><rect x="1182.5" y="821" width="1.3" height="15.0" fill="rgb(234,64,39)" rx="2" ry="2" />
+<text  x="1185.55" y="831.5" ></text>
+</g>
+<g >
+<title>java.util.jar.JarFile.getJarEntry (1 samples, 0.11%)</title><rect x="985.1" y="437" width="1.2" height="15.0" fill="rgb(239,204,33)" rx="2" ry="2" />
+<text  x="988.05" y="447.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.ui.JettyUtils$.startJettyServer (1 samples, 0.11%)</title><rect x="986.3" y="565" width="1.2" height="15.0" fill="rgb(233,38,9)" rx="2" ry="2" />
+<text  x="989.29" y="575.5" ></text>
+</g>
+<g >
+<title>java.util.zip.ZipFile.read (1 samples, 0.11%)</title><rect x="1183.8" y="373" width="1.2" height="15.0" fill="rgb(207,184,10)" rx="2" ry="2" />
+<text  x="1186.79" y="383.5" ></text>
+</g>
+<g >
+<title>org.apache.ivy.core.settings.IvySettings.&lt;init&gt; (1 samples, 0.11%)</title><rect x="990.0" y="789" width="1.3" height="15.0" fill="rgb(215,54,38)" rx="2" ry="2" />
+<text  x="993.02" y="799.5" ></text>
+</g>
+<g >
+<title>scala.collection.mutable.HashMap.foreach (1 samples, 0.11%)</title><rect x="293.2" y="869" width="1.2" height="15.0" fill="rgb(239,120,16)" rx="2" ry="2" />
+<text  x="296.20" y="879.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.SparkSubmit.doSubmit (161 samples, 16.95%)</title><rect x="985.1" y="917" width="199.9" height="15.0" fill="rgb(242,225,6)" rx="2" ry="2" />
+<text  x="988.05" y="927.5" >org.apache.spark.deploy.Sp..</text>
+</g>
+<g >
+<title>java.util.zip.InflaterInputStream.read (1 samples, 0.11%)</title><rect x="988.8" y="517" width="1.2" height="15.0" fill="rgb(249,149,27)" rx="2" ry="2" />
+<text  x="991.78" y="527.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="1181.3" y="357" width="1.2" height="15.0" fill="rgb(225,3,50)" rx="2" ry="2" />
+<text  x="1184.31" y="367.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader$1.run (1 samples, 0.11%)</title><rect x="1183.8" y="517" width="1.2" height="15.0" fill="rgb(218,45,37)" rx="2" ry="2" />
+<text  x="1186.79" y="527.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.loadClass (1 samples, 0.11%)</title><rect x="1183.8" y="597" width="1.2" height="15.0" fill="rgb(212,74,20)" rx="2" ry="2" />
+<text  x="1186.79" y="607.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.network.client.TransportClientFactory.createClient (1 samples, 0.11%)</title><rect x="293.2" y="613" width="1.2" height="15.0" fill="rgb(224,192,34)" rx="2" ry="2" />
+<text  x="296.20" y="623.5" ></text>
+</g>
+<g >
+<title>java.util.zip.ZipFile.getEntry (1 samples, 0.11%)</title><rect x="985.1" y="389" width="1.2" height="15.0" fill="rgb(222,102,46)" rx="2" ry="2" />
+<text  x="988.05" y="399.5" ></text>
+</g>
+<g >
+<title>scala.collection.immutable.Range.foreach$mVc$sp (1 samples, 0.11%)</title><rect x="986.3" y="533" width="1.2" height="15.0" fill="rgb(207,140,18)" rx="2" ry="2" />
+<text  x="989.29" y="543.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.SparkContext$.getOrCreate (2 samples, 0.21%)</title><rect x="985.1" y="661" width="2.4" height="15.0" fill="rgb(233,224,52)" rx="2" ry="2" />
+<text  x="988.05" y="671.5" ></text>
+</g>
+<g >
+<title>sun.instrument.InstrumentationImpl.loadClassAndCallPremain (4 samples, 0.42%)</title><rect x="1185.0" y="965" width="5.0" height="15.0" fill="rgb(214,32,16)" rx="2" ry="2" />
+<text  x="1188.03" y="975.5" ></text>
+</g>
+<g >
+<title>java.security.AccessController.doPrivileged (1 samples, 0.11%)</title><rect x="1180.1" y="629" width="1.2" height="15.0" fill="rgb(241,30,2)" rx="2" ry="2" />
+<text  x="1183.06" y="639.5" ></text>
+</g>
+<g >
+<title>java.net.Inet6AddressImpl.lookupAllHostAddr (152 samples, 16.00%)</title><rect x="991.3" y="645" width="188.8" height="15.0" fill="rgb(221,170,1)" rx="2" ry="2" />
+<text  x="994.26" y="655.5" >java.net.Inet6AddressImp..</text>
+</g>
+<g >
+<title>org.apache.spark.deploy.DependencyUtils$.resolveMavenDependencies (153 samples, 16.11%)</title><rect x="990.0" y="837" width="190.1" height="15.0" fill="rgb(241,40,51)" rx="2" ry="2" />
+<text  x="993.02" y="847.5" >org.apache.spark.deploy...</text>
+</g>
+<g >
+<title>sun.misc.Resource.getBytes (1 samples, 0.11%)</title><rect x="988.8" y="533" width="1.2" height="15.0" fill="rgb(223,34,24)" rx="2" ry="2" />
+<text  x="991.78" y="543.5" ></text>
+</g>
+<g >
+<title>sun.nio.ch.KQueueSelectorImpl.doSelect (79 samples, 8.32%)</title><rect x="10.0" y="821" width="98.1" height="15.0" fill="rgb(240,122,21)" rx="2" ry="2" />
+<text  x="13.00" y="831.5" >sun.nio.ch...</text>
+</g>
+<g >
+<title>org.apache.spark.util.Utils$.fetchFile (1 samples, 0.11%)</title><rect x="293.2" y="741" width="1.2" height="15.0" fill="rgb(233,157,19)" rx="2" ry="2" />
+<text  x="296.20" y="751.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.conf.Configuration.getTrimmed (1 samples, 0.11%)</title><rect x="1182.5" y="421" width="1.3" height="15.0" fill="rgb(241,9,28)" rx="2" ry="2" />
+<text  x="1185.55" y="431.5" ></text>
+</g>
+<g >
+<title>org.apache.ivy.util.HostUtil.getLocalHostName (152 samples, 16.00%)</title><rect x="991.3" y="709" width="188.8" height="15.0" fill="rgb(217,157,38)" rx="2" ry="2" />
+<text  x="994.26" y="719.5" >org.apache.ivy.util.Host..</text>
+</g>
+<g >
+<title>org.apache.spark.deploy.SparkHadoopUtil$.org$apache$spark$deploy$SparkHadoopUtil$$appendS3AndSparkHadoopConfigurations (1 samples, 0.11%)</title><rect x="1181.3" y="773" width="1.2" height="15.0" fill="rgb(211,101,51)" rx="2" ry="2" />
+<text  x="1184.31" y="783.5" ></text>
+</g>
+<g >
+<title>sun.misc.Launcher$AppClassLoader.loadClass (1 samples, 0.11%)</title><rect x="986.3" y="245" width="1.2" height="15.0" fill="rgb(225,157,37)" rx="2" ry="2" />
+<text  x="989.29" y="255.5" ></text>
+</g>
+<g >
+<title>com.uber.profiling.util.AgentLogger.info (1 samples, 0.11%)</title><rect x="1185.0" y="805" width="1.3" height="15.0" fill="rgb(233,106,40)" rx="2" ry="2" />
+<text  x="1188.03" y="815.5" ></text>
+</g>
+<g >
+<title>scala.collection.mutable.HashTable$class.foreachEntry (1 samples, 0.11%)</title><rect x="1183.8" y="805" width="1.2" height="15.0" fill="rgb(229,47,28)" rx="2" ry="2" />
+<text  x="1186.79" y="815.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.SparkContext$$anonfun$11.apply (1 samples, 0.11%)</title><rect x="986.3" y="613" width="1.2" height="15.0" fill="rgb(215,116,33)" rx="2" ry="2" />
+<text  x="989.29" y="623.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.executor.Executor$$anonfun$org$apache$spark$executor$Executor$$updateDependencies$5.apply (1 samples, 0.11%)</title><rect x="293.2" y="757" width="1.2" height="15.0" fill="rgb(212,142,6)" rx="2" ry="2" />
+<text  x="296.20" y="767.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.DependencyUtils$.org$apache$spark$deploy$DependencyUtils$$resolveGlobPath (1 samples, 0.11%)</title><rect x="1182.5" y="645" width="1.3" height="15.0" fill="rgb(235,127,23)" rx="2" ry="2" />
+<text  x="1185.55" y="655.5" ></text>
+</g>
+<g >
+<title>java.util.zip.ZipFile.getEntry (1 samples, 0.11%)</title><rect x="293.2" y="389" width="1.2" height="15.0" fill="rgb(244,81,48)" rx="2" ry="2" />
+<text  x="296.20" y="399.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.SparkSubmit$$anonfun$2.apply (2 samples, 0.21%)</title><rect x="1180.1" y="805" width="2.4" height="15.0" fill="rgb(219,88,44)" rx="2" ry="2" />
+<text  x="1183.06" y="815.5" ></text>
+</g>
+<g >
+<title>java.util.zip.ZipFile$ZipFileInputStream.read (1 samples, 0.11%)</title><rect x="987.5" y="405" width="1.3" height="15.0" fill="rgb(236,66,24)" rx="2" ry="2" />
+<text  x="990.54" y="415.5" ></text>
+</g>
+<g >
+<title>sun.misc.Launcher$AppClassLoader.loadClass (1 samples, 0.11%)</title><rect x="1180.1" y="677" width="1.2" height="15.0" fill="rgb(254,92,3)" rx="2" ry="2" />
+<text  x="1183.06" y="687.5" ></text>
+</g>
+<g >
+<title>sun.nio.cs.StreamEncoder.writeBytes (1 samples, 0.11%)</title><rect x="1185.0" y="709" width="1.3" height="15.0" fill="rgb(245,117,0)" rx="2" ry="2" />
+<text  x="1188.03" y="719.5" ></text>
+</g>
+<g >
+<title>sun.misc.Launcher$AppClassLoader.loadClass (1 samples, 0.11%)</title><rect x="1183.8" y="581" width="1.2" height="15.0" fill="rgb(226,170,15)" rx="2" ry="2" />
+<text  x="1186.79" y="591.5" ></text>
+</g>
+<g >
+<title>java.util.concurrent.LinkedBlockingQueue.take (338 samples, 35.58%)</title><rect x="294.4" y="901" width="419.9" height="15.0" fill="rgb(235,198,33)" rx="2" ry="2" />
+<text  x="297.44" y="911.5" >java.util.concurrent.LinkedBlockingQueue.take</text>
+</g>
+<g >
+<title>io.netty.util.internal.ThreadExecutorMap$2.run (79 samples, 8.32%)</title><rect x="10.0" y="933" width="98.1" height="15.0" fill="rgb(212,25,36)" rx="2" ry="2" />
+<text  x="13.00" y="943.5" >io.netty.ut..</text>
+</g>
+<g >
+<title>org.apache.hadoop.fs.FileSystem$Cache.get (1 samples, 0.11%)</title><rect x="1182.5" y="613" width="1.3" height="15.0" fill="rgb(215,32,19)" rx="2" ry="2" />
+<text  x="1185.55" y="623.5" ></text>
+</g>
+<g >
+<title>scala.collection.immutable.List.map (1 samples, 0.11%)</title><rect x="987.5" y="709" width="1.3" height="15.0" fill="rgb(247,32,38)" rx="2" ry="2" />
+<text  x="990.54" y="719.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.rpc.netty.NettyRpcEnv$$anonfun$openChannel$1.apply$mcV$sp (1 samples, 0.11%)</title><rect x="293.2" y="645" width="1.2" height="15.0" fill="rgb(212,167,5)" rx="2" ry="2" />
+<text  x="296.20" y="655.5" ></text>
+</g>
+<g >
+<title>java.util.zip.ZipFile.getEntry (1 samples, 0.11%)</title><rect x="985.1" y="405" width="1.2" height="15.0" fill="rgb(222,203,36)" rx="2" ry="2" />
+<text  x="988.05" y="415.5" ></text>
+</g>
+<g >
+<title>io.netty.util.concurrent.FastThreadLocalRunnable.run (79 samples, 8.32%)</title><rect x="10.0" y="949" width="98.1" height="15.0" fill="rgb(231,75,51)" rx="2" ry="2" />
+<text  x="13.00" y="959.5" >io.netty.ut..</text>
+</g>
+<g >
+<title>java.util.zip.Inflater.inflate (1 samples, 0.11%)</title><rect x="988.8" y="501" width="1.2" height="15.0" fill="rgb(231,198,8)" rx="2" ry="2" />
+<text  x="991.78" y="511.5" ></text>
+</g>
+<g >
+<title>java.util.zip.InflaterInputStream.read (1 samples, 0.11%)</title><rect x="990.0" y="613" width="1.3" height="15.0" fill="rgb(238,27,7)" rx="2" ry="2" />
+<text  x="993.02" y="623.5" ></text>
+</g>
+<g >
+<title>org.apache.spark.deploy.DependencyUtils$$anonfun$resolveGlobPaths$2.apply (1 samples, 0.11%)</title><rect x="1182.5" y="661" width="1.3" height="15.0" fill="rgb(241,11,48)" rx="2" ry="2" />
+<text  x="1185.55" y="671.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.access$100 (1 samples, 0.11%)</title><rect x="988.8" y="565" width="1.2" height="15.0" fill="rgb(214,75,0)" rx="2" ry="2" />
+<text  x="991.78" y="575.5" ></text>
+</g>
+<g >
+<title>org.apache.hadoop.fs.FileSystem$Cache$Key.&lt;init&gt; (1 samples, 0.11%)</title><rect x="1182.5" y="581" width="1.3" height="15.0" fill="rgb(233,16,47)" rx="2" ry="2" />
+<text  x="1185.55" y="591.5" ></text>
+</g>
+<g >
+<title>java.security.AccessController.doPrivileged (1 samples, 0.11%)</title><rect x="990.0" y="709" width="1.3" height="15.0" fill="rgb(213,21,48)" rx="2" ry="2" />
+<text  x="993.02" y="719.5" ></text>
+</g>
+<g >
+<title>sun.reflect.DelegatingMethodAccessorImpl.invoke (4 samples, 0.42%)</title><rect x="985.1" y="821" width="4.9" height="15.0" fill="rgb(248,225,44)" rx="2" ry="2" />
+<text  x="988.05" y="831.5" ></text>
+</g>
+<g >
+<title>java.net.URLClassLoader.findClass (1 samples, 0.11%)</title><rect x="986.3" y="213" width="1.2" height="15.0" fill="rgb(246,43,17)" rx="2" ry="2" />
+<text  x="989.29" y="223.5" ></text>
+</g>
+<g >
+<title>java.lang.ClassLoader.defineClass (1 samples, 0.11%)</title><rect x="1181.3" y="485" width="1.2" height="15.0" fill="rgb(243,25,11)" rx="2" ry="2" />
+<text  x="1184.31" y="495.5" ></text>
+</g>
+<g >
+<title>java.security.SecureClassLoader.defineClass (1 samples, 0.11%)</title><rect x="1181.3" y="309" width="1.2" height="15.0" fill="rgb(254,2,40)" rx="2" ry="2" />
+<text  x="1184.31" y="319.5" ></text>
+</g>
+</g>
+</svg>
