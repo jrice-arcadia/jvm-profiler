@@ -21,39 +21,50 @@ buildscript {
             }
         }
     }
-    dependencies {
-        classpath 'com.arcadia:git-version:2.0.0'
-        classpath 'com.arcadia:s3-latest-snapshot:+'
+    //dependencies {
+    //    classpath 'com.arcadia:git-version:2.0.0'
+    //    classpath 'com.arcadia:s3-latest-snapshot:+'
+  //}
+}
+
+apply plugin: 'java'
+apply plugin: 'maven-publish'
+apply plugin: 'idea'
+
+//apply plugin: 'com.arcadia.gradle.plugin.s3-latest-snapshot'
+//apply plugin: 'com.arcadia.gradle.plugin.git-version'
+
+repositories {
+    mavenLocal()
+    jcenter()
+    mavenCentral()
+    maven {
+        name "ArcadiaNexus"
+        url "https://sandboxnexus.arcadiaanalytics.com/repository/maven-public/"
+        credentials {
+            username project.properties.nexusUsername
+            password project.properties.nexusPassword
+        }
     }
 }
 
-plugins {
-    id 'java'
-    id 'maven-publish'
-}
-
-apply plugin: 'com.arcadia.gradle.plugin.s3-latest-snapshot'
-apply plugin: 'com.arcadia.gradle.plugin.git-version'
-
-
 dependencies {
-    implementation 'org.apache.kafka:kafka-clients:0.11.0.2'
-    implementation 'com.amazonaws:aws-java-sdk-s3:1.11.907'
-    implementation 'org.apache.commons:commons-lang3:3.5'
-    implementation 'com.fasterxml.jackson.core:jackson-core:2.6.7'
-    implementation 'com.fasterxml.jackson.core:jackson-databind:2.6.7.4'
-    implementation 'org.javassist:javassist:3.21.0-GA'
-    implementation 'org.yaml:snakeyaml:1.18'
-    implementation 'io.prometheus:simpleclient:0.5.0'
-    implementation 'io.prometheus:simpleclient_pushgateway:0.5.0'
-    implementation 'org.apache.httpcomponents:httpclient:4.5.13'
-    testImplementation 'junit:junit:4.13.1'
+    compileOnly 'org.apache.kafka:kafka-clients:0.11.0.2'
+    compile 'com.amazonaws:aws-java-sdk-s3:1.11.907'
+    compile 'org.apache.commons:commons-lang3:3.5'
+    compile 'com.fasterxml.jackson.core:jackson-core:2.6.7'
+    compile 'com.fasterxml.jackson.core:jackson-databind:2.6.7.4'
+    compile 'org.javassist:javassist:3.21.0-GA'
+    compile 'org.yaml:snakeyaml:1.18'
+    compileOnly 'io.prometheus:simpleclient:0.5.0'
+    compileOnly 'io.prometheus:simpleclient_pushgateway:0.5.0'
+    compile 'org.apache.httpcomponents:httpclient:4.5.13'
+    testCompile 'junit:junit:4.13.1'
 }
 
-version = '1.0.0-SNAPSHOT'
-project.ext.artifactId='arcadia-jvm-profiler'
-group = 'com.arcadia'
-java.sourceCompatibility = JavaVersion.VERSION_1_8
+version = '1.1.0'
+project.ext.artifactId='jvm-profiler'
+group = 'com.uber'
 
 task profilerSourceJar(type: Jar) {
     from sourceSets.main.allJava

@@ -21,6 +21,7 @@ public class S3OutputReporter implements Reporter {
         String path = "cigna.data.implementation2.arcadia/bugathon/sources/macig/instances/bugathon/events/jvm_metrics_output/";
         //String path =  "cigna.data.implementation2.arcadia/bugathon/";
         String key = "metrics.txt";
+        System.out.println("JR: entering the try.");
 
         try {
             System.out.println("Doing a LIST on events.");
