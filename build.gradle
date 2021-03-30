@@ -28,7 +28,7 @@ buildscript {
 }
 
 apply plugin: 'java'
-apply plugin: 'maven-publish'
+apply plugin: 'maven'
 apply plugin: 'idea'
 
 //apply plugin: 'com.arcadia.gradle.plugin.s3-latest-snapshot'
@@ -68,25 +68,4 @@ group = 'com.uber'
 
 task profilerSourceJar(type: Jar) {
     from sourceSets.main.allJava
-}
-
-publishing.repositories {
-    maven {
-        name "ArcadiaNexus"
-        url "https://sandboxnexus.arcadiaanalytics.com/repository/maven-${version.endsWith('-SNAPSHOT')?'snapshots':'releases'}/"
-        credentials {
-            username project.properties.nexusUsername
-            password project.properties.nexusPassword
-        }
-    }
-}
-
-publishing.publications {
-    components(MavenPublication) {
-
-        artifact profilerSourceJar {
-            classifier "sources"
-        }
-
-    }
 }
