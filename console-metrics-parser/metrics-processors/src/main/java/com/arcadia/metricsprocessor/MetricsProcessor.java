@@ -25,10 +25,13 @@ public class MetricsProcessor {
 
     private static Gson g;
     private static String PARENT_DIR = "";
+    private static StringBuffer output; // thread safe
+    private static final String OUTPUT_FILENAME = "metrics.txt";
 
     public static void main(String... args) throws Exception{
         String path = args[0];
         PARENT_DIR = path;
+        output = new StringBuffer("");
         g = new Gson();
         CPU_AND_MEM_SCHEMA.add("transform_name");
         CPU_AND_MEM_SCHEMA.add("timestamp_epoch");
@@ -54,6 +57,7 @@ public class MetricsProcessor {
                 String[] tmp = p.getFileName().toString().split("\\.");
                 String taskId = tmp[tmp.length-2];
                 Stream<String> s = Files.lines(p);
+                String[] lines = Files.lines(p).toArray(String[]::new); // this will be small.
                 s.filter(l -> l.contains("CpuAndMemory") || l.contains("heapmax"))
                         .forEach(l -> processLine(l, taskId));
                 s.close();
@@ -64,6 +68,8 @@ public class MetricsProcessor {
             System.out.println("Finished processing Path: " + path);
         });
         metricsFiles.close();
+        Path p = Paths.get(PARENT_DIR + "/" + OUTPUT_FILENAME);
+        Files.write(p, output.toString().getBytes());
         return;
     }
 
@@ -126,11 +132,8 @@ public class MetricsProcessor {
         line[CPU_AND_MEM_SCHEMA.indexOf("virt_mem_hwm")] = virt_mem_hwm.toString();
         line[CPU_AND_MEM_SCHEMA.indexOf("mem_usage")] = total_mem_usage.toString();
 
-
-
-
-
-
+        output.append(String.join(",", line));
+        output.append("\n");
 
 
         /** ALL MEMORY AND DISK VALUES ARE IN BYTES. **/
