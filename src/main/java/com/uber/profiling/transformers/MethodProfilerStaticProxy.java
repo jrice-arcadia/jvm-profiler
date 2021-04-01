@@ -33,7 +33,7 @@ public class MethodProfilerStaticProxy {
     public static void setArgumentCollector(MethodArgumentCollector collector) {
         argumentCollectorSingleton = collector;
     }
-
+/** This method is a callback registered with the JVM it looks like. metricValue is inserted by the JVM. **/
     public static void collectMethodDuration(String className, String methodName, long metricValue) {
         if (collectorSingleton == null) {
             return;

@@ -5,3 +5,4 @@ target/
 dependency-reduced-pom.xml
 
 build/
+console-metrics-parser/metrics-processors/build/

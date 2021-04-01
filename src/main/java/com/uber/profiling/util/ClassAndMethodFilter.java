@@ -36,6 +36,9 @@ public class ClassAndMethodFilter {
         return classAndMethods.length == 0;
     }
 
+
+    /** implement wildcard here **/ // but remember, we want the flamegraph.. will the times just give us that
+  //  implicitly? // we want the stacked nature of the stacktrace tho right?
     public boolean matchClass(String className) {
         for (ClassAndMethod classAndMethod : classAndMethods) {
             if (className.startsWith(classAndMethod.getClassName())) {
