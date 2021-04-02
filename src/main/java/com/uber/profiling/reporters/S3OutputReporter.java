@@ -9,14 +9,17 @@ import com.uber.profiling.util.StringUtils;
 
 import java.io.ByteArrayInputStream;
 import java.util.Map;
+import java.util.UUID;
 
 public class S3OutputReporter implements Reporter {
     private static AmazonS3 s3Client = new AmazonS3Client();
+    private static UUID EXECUTOR_IDENTIFIER = UUID.randomUUID();
    // private static final int MAX_BUF_SIZE_BYTES = 5000000; // 5 mb -- make it much smaller for debug
     private static final int MAX_BUF_SIZE_BYTES = 5000; //5kb - this happened SO fast. but it worked.
     private static StringBuffer buffer = new StringBuffer(MAX_BUF_SIZE_BYTES); // sb is threadsafe
 
     public void report(String profilerName, Map<String, Object> metrics) {
+        metrics.put("executor_number", EXECUTOR_IDENTIFIER.toString());
         String json = JsonUtils.serialize(metrics);
         buffer.append(profilerName + ":"+ json + "\n");
         int length = buffer.length();

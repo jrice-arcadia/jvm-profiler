@@ -114,6 +114,7 @@ public class MetricsProcessor {
         String role                             = metrics.get("role").toString();
         String processUUID                      = metrics.get("processUuid").toString();
         String virt_mem_hwm                     = Long.toString(Math.round(Double.valueOf(metrics.get("vmHWM").toString())));
+        String executor_number                  = metrics.get("executor_number").toString();
 
         BigDecimal total_memory_in_use = new BigDecimal(heap_memory_in_use).add(new BigDecimal(nonheap_memory_in_use));
         BigDecimal total_memory_committed = new BigDecimal(heap_memory_committed_in_jvm).add(new BigDecimal(nonheap_memory_committed_in_jvm));
@@ -126,7 +127,7 @@ public class MetricsProcessor {
         line[CPU_AND_MEM_SCHEMA.indexOf("timestamp_epoch_ms")] = Long.toString(Math.round(timestamp_ms));
         line[CPU_AND_MEM_SCHEMA.indexOf("host")] = host;
         line[CPU_AND_MEM_SCHEMA.indexOf("role")] = role;
-        line[CPU_AND_MEM_SCHEMA.indexOf("executor_number")] = "";// we need to set this in the profiler code. we used to get this from dcos in a log file name. taskId.toString();
+        line[CPU_AND_MEM_SCHEMA.indexOf("executor_number")] = executor_number;// we need to set this in the profiler code. we used to get this from dcos in a log file name. taskId.toString();
         line[CPU_AND_MEM_SCHEMA.indexOf("process_uuid")] = processUUID.toString();
         line[CPU_AND_MEM_SCHEMA.indexOf("infrastructure")] = "implementation2";
         line[CPU_AND_MEM_SCHEMA.indexOf("system_cpu_usage")] = new BigDecimal(system_cpu_usage).toString();
