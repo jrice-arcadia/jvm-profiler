@@ -37,7 +37,8 @@ public class S3OutputReporter implements Reporter {
                     new ByteArrayInputStream(content.getBytes()),
                     m);
             System.out.println("S3 client returned from putObject(). Emptying buffer.");
-            buffer = new StringBuffer(MAX_BUF_SIZE_BYTES);
+            /** Emptying the buffer is more performant than re-allocating, probably. **/
+            buffer.delete(0, buffer.length());
         }  catch (AmazonS3Exception e) {
             System.out.println("AmazonS3Exception thrown.");
             System.out.println(e.getErrorCode());
