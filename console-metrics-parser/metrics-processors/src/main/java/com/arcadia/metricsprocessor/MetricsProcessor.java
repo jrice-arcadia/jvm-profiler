@@ -1,6 +1,6 @@
 package com.arcadia.metricsprocessor;
 
-import com.google.gson.Gson;
+import com.google.gson.*;
 
 import java.io.*;
 
@@ -33,7 +33,7 @@ public class MetricsProcessor {
         String path = args[0];
         PARENT_DIR = path;
         output = new StringBuffer("");
-        g = new Gson();
+        g = new GsonBuilder().setLenient().create();
         CPU_AND_MEM_SCHEMA.add("transform_name");
         CPU_AND_MEM_SCHEMA.add("timestamp_epoch");
         CPU_AND_MEM_SCHEMA.add("timestamp_epoch_ms");
@@ -58,12 +58,10 @@ public class MetricsProcessor {
 
             System.out.println("Processing Path: " + p);
             try {
-                String[] tmp = p.getFileName().toString().split("\\.");
-                String taskId = tmp[tmp.length-2];
                 Stream<String> s = Files.lines(p);
                 String[] lines = Files.lines(p).toArray(String[]::new); // this will be small.
                 s.filter(l -> l.contains("CpuAndMemory") || l.contains("heapMemoryMax"))
-                        .forEach(l -> processLine(l, taskId));
+                        .forEach(l -> processLine(l));
                 s.close();
             } catch (IOException ex) {
                 System.out.println("EXCEPTION: " + ex.getMessage());
@@ -73,20 +71,21 @@ public class MetricsProcessor {
         });
         metricsFiles.close();
         System.out.println("Size of output: " + output.length());
-        String dest = PARENT_DIR + "processed_metrics/" + OUTPUT_FILENAME ;
+        String dest = PARENT_DIR + "/processed_metrics/" + OUTPUT_FILENAME;
+        System.out.println("Writing output to " + dest);
         Path p = Paths.get(dest);
-        Files.createDirectory(Paths.get(PARENT_DIR + "processed_metrics/"));
+        Files.createDirectory(Paths.get(PARENT_DIR + "/processed_metrics/"));
         Files.createFile(p);
         Files.write(p, output.toString().getBytes());
         return;
     }
 
-    private static void processLine(String line, String taskId) throws UncheckedIOException {
+    private static void processLine(String line) throws UncheckedIOException {
 
         try {
 
            if (line.contains("heapMemoryMax")) {
-                storeCpuAndMemory(g.fromJson(line, Map.class), taskId);
+                storeCpuAndMemory(g.fromJson(line, Map.class));
                // Files.write(metricsPath, (line+"\n").getBytes(), StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOptionCPU_AND_MEM_SCHEMA.add);
             } else if (line.contains("stacktrace")) {
                // Files.write(metricsPath, (line+"\n").getBytes(), StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOptionCPU_AND_MEM_SCHEMA.add);
@@ -94,11 +93,13 @@ public class MetricsProcessor {
         } catch (IOException ex) {
             System.out.println("EXCEPTION: " + ex.getMessage());
             throw new UncheckedIOException(ex);
+        } catch (JsonIOException ex) {
+            return;
         }
     }
 
 
-    public static void storeCpuAndMemory(Map<String, Object> metrics, String taskId) throws IOException {
+    public static void storeCpuAndMemory(Map<String, Object> metrics) throws IOException {
         String transform_name                   = metrics.get("tag").toString();
         Double timestamp_ms                      = Double.valueOf(metrics.get("epochMillis").toString());
         String system_cpu_usage                 = metrics.get("systemCpuLoad").toString();
