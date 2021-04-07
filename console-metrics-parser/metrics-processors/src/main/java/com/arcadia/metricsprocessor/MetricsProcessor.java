@@ -25,7 +25,7 @@ public class MetricsProcessor {
     private static ArrayList<String> CPU_AND_MEM_SCHEMA = new ArrayList<String>();
     private static ArrayList<String>  IO_SCHEMA          = new ArrayList<String>();
 
-    private static Gson g;
+    private static Gson g = new GsonBuilder().setLenient().create();
     private static String RAW_METRICS_DIRECTORY = "";
     private static final String STAGING         = "/staging/";
     private static final String COMPLETED       = "/completed/";
@@ -35,7 +35,7 @@ public class MetricsProcessor {
     private static final String STACKTRACE_PATH = "/stacktraces/";
     private static final String IO_PATH         = "/io/";
 
-    private static FileWriter cpuAndMemoryWriter, stacktraceWriter, ioWriter;
+    protected static Writer cpuAndMemoryWriter, stacktraceWriter, ioWriter;
 
     /** Path examples. **/
     // /cpuandmemory/staging/cpuandmemory_jsons.txt
@@ -46,7 +46,7 @@ public class MetricsProcessor {
         String path = args[0];
         RAW_METRICS_DIRECTORY = path;
 
-        String cpuAndMemoryDest = RAW_METRICS_DIRECTORY + CPU_MEMORY_PATH;
+        String cpuAndMemoryDest = RAW_METRICS_DIRECTORY + CPU_MEMORY_PATH + COMPLETED;
         String stacktraceDest   = RAW_METRICS_DIRECTORY + STACKTRACE_PATH;
         String ioDest           = RAW_METRICS_DIRECTORY + IO_PATH + COMPLETED;
         System.out.println("Creating directories.");
@@ -61,7 +61,7 @@ public class MetricsProcessor {
         stacktraceWriter   = new FileWriter(stacktraceDest, true);
         ioWriter           = new FileWriter(ioDest, true);
 
-        g = new GsonBuilder().setLenient().create();
+
         initCpuMemSchema();
         initIoSchema();
 
@@ -72,7 +72,7 @@ public class MetricsProcessor {
         /** Well, we are routing in the foreach. That's fine. Have processLine write to FileOutputStreams that get flushed. **/
         Stream<Path> metricsFiles = Files.list(Paths.get(path));
         metricsFiles.forEach(p ->  {
-
+            if (Files.isDirectory(p)) return;
             System.out.println("Processing Path: " + p);
             try {
                 Stream<String> s = Files.lines(p);
@@ -91,7 +91,7 @@ public class MetricsProcessor {
         return;
     }
 
-    private static void initCpuMemSchema() {
+    protected static void initCpuMemSchema() {
         CPU_AND_MEM_SCHEMA.add("transform_name");
         CPU_AND_MEM_SCHEMA.add("timestamp_epoch");
         CPU_AND_MEM_SCHEMA.add("timestamp_epoch_ms");
@@ -110,7 +110,7 @@ public class MetricsProcessor {
         CPU_AND_MEM_SCHEMA.add("mem_usage");
     }
 
-    private static void initIoSchema() {
+    protected static void initIoSchema() {
         IO_SCHEMA.add("transform_name");
         IO_SCHEMA.add("timestamp_epoch");
         IO_SCHEMA.add("timestamp_epoch_ms");
@@ -204,7 +204,7 @@ public class MetricsProcessor {
 
     }
 
-    private synchronized static void writeLine(FileWriter fw, String line) {
+    private synchronized static void writeLine(Writer fw, String line) {
         try {
             fw.write(line);
             fw.write("\n");
