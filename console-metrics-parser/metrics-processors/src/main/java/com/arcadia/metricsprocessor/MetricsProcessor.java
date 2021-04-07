@@ -27,9 +27,6 @@ public class MetricsProcessor {
 
     private static Gson g;
     private static String RAW_METRICS_DIRECTORY = "";
-    private static StringBuffer cpuMemoryBuffer; // thread safe
-    private static StringBuffer stackTraceBuffer;
-    private static StringBuffer ioBuffer;
     private static final String STAGING         = "/staging/";
     private static final String COMPLETED       = "/completed/";
     private static final String NORMALIZED      = "/normalized";
@@ -64,15 +61,13 @@ public class MetricsProcessor {
         stacktraceWriter   = new FileWriter(stacktraceDest, true);
         ioWriter           = new FileWriter(ioDest, true);
 
-        cpuMemoryBuffer  = new StringBuffer("");
-        stackTraceBuffer = new StringBuffer("");
-        ioBuffer         = new StringBuffer("");
         g = new GsonBuilder().setLenient().create();
         initCpuMemSchema();
         initIoSchema();
 
-        cpuMemoryBuffer.append(String.join(",", CPU_AND_MEM_SCHEMA) + "\n");
-        ioBuffer.append(String.join(",", IO_SCHEMA) + "\n");
+        cpuAndMemoryWriter.append(String.join(",", CPU_AND_MEM_SCHEMA) + "\n");
+        ioWriter.append(String.join(",", IO_SCHEMA) + "\n");
+
         /** I think for this application's scale we gotta do all of the routing and actual writing to files in the streams. **/
         /** Well, we are routing in the foreach. That's fine. Have processLine write to FileOutputStreams that get flushed. **/
         Stream<Path> metricsFiles = Files.list(Paths.get(path));
@@ -93,28 +88,6 @@ public class MetricsProcessor {
             System.out.println("Finished processing Path: " + p);
         });
         metricsFiles.close();
-       /* System.out.println("Size of CPU and Memory output: " + cpuMemoryBuffer.length());
-        System.out.println("Size of Stacktrace output: " + stackTraceBuffer.length());
-        System.out.println("Size of IO output: " + ioBuffer.length());
-*/
-       /* String cpuAndMemoryDest = RAW_METRICS_DIRECTORY + CPU_MEMORY_PATH + System.currentTimeMillis() + "_cpuandmemory.csv";
-        String stacktraceDest = RAW_METRICS_DIRECTORY + STACKTRACE_PATH + System.currentTimeMillis() + "_stacktraces.txt";
-        System.out.println("Creating directories.");
-        Files.createDirectories(Paths.get(RAW_METRICS_DIRECTORY + CPU_MEMORY_PATH));
-        Files.createDirectories(Paths.get(RAW_METRICS_DIRECTORY + STACKTRACE_PATH));*/
-      //  System.out.println("Writing output files:\n" + cpuAndMemoryDest + "\n" + stacktraceDest);
-
-        /** Write Cpu and Memory metrics. **/
-      /*  Path p = Paths.get(cpuAndMemoryDest);
-        Files.createFile(p);
-        Files.write(p, cpuMemoryBuffer.toString().getBytes());
-*/
-        /** Write Stacktraces. **/
-      /*  p = Paths.get(stacktraceDest);
-        Files.createFile(p);
-        Files.write(p, stackTraceBuffer.toString().getBytes());
-
-       */
         return;
     }
 
@@ -187,7 +160,6 @@ public class MetricsProcessor {
             }
         }
 
-
         String transform_name                   = metrics.get("tag").toString();
         Double timestamp_ms                     = Double.valueOf(metrics.get("epochMillis").toString());
         String host                             = metrics.get("name").toString();
@@ -227,16 +199,23 @@ public class MetricsProcessor {
         line[IO_SCHEMA.indexOf("jvmBytesWrittenToStorage")] = Long.toString(new Double(jvmBytesWrittenToStorage).longValue());
         line[IO_SCHEMA.indexOf("jvmDiskBytesRead")] = Long.toString(new Double(jvmDiskBytesRead).longValue());
         line[IO_SCHEMA.indexOf("jvmBytesReadFromStorage")] = Long.toString(new Double(jvmBytesReadFromStorage).longValue());
+
+        writeLine(ioWriter, String.join(",", line));
+
+    }
+
+    private synchronized static void writeLine(FileWriter fw, String line) {
         try {
-            ioWriter.write(String.join(",", line));
-            ioWriter.write("\n");
+            fw.write(line);
+            fw.write("\n");
         } catch (IOException ex) {
             System.out.println(ex.getMessage());
         }
     }
 
+
     public static void storeStackTrace(String line) {
-        stackTraceBuffer.append(line+"\n");
+        writeLine(stacktraceWriter, line);
     }
 
     public static void storeCpuAndMemory(Map<String, Object> metrics) throws IOException {
@@ -280,8 +259,7 @@ public class MetricsProcessor {
         line[CPU_AND_MEM_SCHEMA.indexOf("virt_mem_hwm")] = virt_mem_hwm;
         line[CPU_AND_MEM_SCHEMA.indexOf("mem_usage")] = total_mem_usage.toString();
 
-        cpuMemoryBuffer.append(String.join(",", line));
-        cpuMemoryBuffer.append("\n");
+        writeLine(cpuAndMemoryWriter, String.join(",", line));
     }
 }
 

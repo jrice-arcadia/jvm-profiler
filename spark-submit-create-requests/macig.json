@@ -66,7 +66,10 @@
     "spark.executorEnv.spark.authenticate.secret": "rooted",
     "spark.executorEnv.spark.network.crypto.enabled": "true",
     "spark.executorEnv.spark.authenticate.enableSaslEncryption": "true",
-    "spark.executorEnv.SPARK_EXECUTOR_OPTS": "-javaagent:\"macig-notebooks-3.2.0-all.jar\"=reporter=com.uber.profiling.reporters.S3OutputReporter,tag=macigjr,sampleInterval=5000,metricInterval=100000,ioProfiling=true\n    -Dspark.authenticate=true \n    -Dspark.authenticate.secret=rooted \n    -Dspark.network.crypto.enabled=true \n    -Dspark.authenticate.enableSaslEncryption=true\n    "
+    "spark.executorEnv.SPARK_EXECUTOR_OPTS": "-javaagent:\"macig-notebooks-3.2.0-all.jar\"=reporter=com.uber.profiling.reporters.S3OutputReporter,tag=macigjr,sampleInterval=5000,metricInterval=100000,ioProfiling=true\n    -Dspark.authenticate=true \n    -Dspark.authenticate.secret=rooted \n    -Dspark.network.crypto.enabled=true \n    -Dspark.authenticate.enableSaslEncryption=true\n    ",
+    "spark.eventLog.dir": "s3a://arcadia.provisioning.implementation2/sparkHistoryServer/eventLogs",
+    "spark.eventLog.enabled": "true",
+    "spark.history.provider": "org.apache.hadoop.fs.s3a.S3AFileSystem"
   },
   "mainClass": "com.arcadia.notebook.NotebookSpark",
   "appResource": "s3a://s3-sandbox-artifacts-repo/maven-private/all/com/arcadia/transformation/macig-notebooks/3.2.0-SNAPSHOT/jr-macig-profile/macig-notebooks-3.2.0-all.jar",
