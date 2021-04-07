@@ -93,26 +93,28 @@ public class MetricsProcessor {
             System.out.println("Finished processing Path: " + p);
         });
         metricsFiles.close();
-        System.out.println("Size of CPU and Memory output: " + cpuMemoryBuffer.length());
+       /* System.out.println("Size of CPU and Memory output: " + cpuMemoryBuffer.length());
         System.out.println("Size of Stacktrace output: " + stackTraceBuffer.length());
         System.out.println("Size of IO output: " + ioBuffer.length());
-
+*/
        /* String cpuAndMemoryDest = RAW_METRICS_DIRECTORY + CPU_MEMORY_PATH + System.currentTimeMillis() + "_cpuandmemory.csv";
         String stacktraceDest = RAW_METRICS_DIRECTORY + STACKTRACE_PATH + System.currentTimeMillis() + "_stacktraces.txt";
         System.out.println("Creating directories.");
         Files.createDirectories(Paths.get(RAW_METRICS_DIRECTORY + CPU_MEMORY_PATH));
         Files.createDirectories(Paths.get(RAW_METRICS_DIRECTORY + STACKTRACE_PATH));*/
-        System.out.println("Writing output files:\n" + cpuAndMemoryDest + "\n" + stacktraceDest);
+      //  System.out.println("Writing output files:\n" + cpuAndMemoryDest + "\n" + stacktraceDest);
 
         /** Write Cpu and Memory metrics. **/
-        Path p = Paths.get(cpuAndMemoryDest);
+      /*  Path p = Paths.get(cpuAndMemoryDest);
         Files.createFile(p);
         Files.write(p, cpuMemoryBuffer.toString().getBytes());
-
+*/
         /** Write Stacktraces. **/
-        p = Paths.get(stacktraceDest);
+      /*  p = Paths.get(stacktraceDest);
         Files.createFile(p);
         Files.write(p, stackTraceBuffer.toString().getBytes());
+
+       */
         return;
     }
 
@@ -163,6 +165,7 @@ public class MetricsProcessor {
             } else if (line.contains("Stacktrace:")) {
                storeStackTrace(line.replace("Stacktrace:", ""));
             } else if (line.contains("IO:")) {
+               System.out.println("Line for IO:\n" + line);
                storeIO(g.fromJson(line.replace("IO:", ""), Map.class));
            }
         } catch (IOException ex) {
@@ -173,21 +176,37 @@ public class MetricsProcessor {
         }
     }
     public static void storeIO(Map<String, Object> metrics) {
+        String stat = metrics.get("stat").toString();
+        Object[] cpus = g.fromJson(stat, Object[].class);
+        Map<String, Object> aggregateCpu = null;
+        for(Object cpu: cpus) {
+            Map<String, Object> c = g.fromJson(cpu.toString(), Map.class);
+            if ("cpu".equals(c.get("cpu").toString())) {
+                aggregateCpu = c;
+                break;
+            }
+        }
+
+
         String transform_name                   = metrics.get("tag").toString();
         Double timestamp_ms                     = Double.valueOf(metrics.get("epochMillis").toString());
         String host                             = metrics.get("name").toString();
         String role                             = metrics.get("role").toString();
         String processUUID                      = metrics.get("processUuid").toString();
         String executor_number                  = metrics.get("executor_number").toString();
-        Long system             = new Long(metrics.get("system").toString());
-        Long idle               = new Long(metrics.get("idle").toString());
-        Long iowait             = new Long(metrics.get("iowait").toString());
-        Long user               = new Long(metrics.get("user").toString());
-        Long nice               = new Long(metrics.get("nice").toString());
-        Long jvmDiskBytesWritten  = new Long(metrics.get("jvmDiskBytesWritten").toString());
-        Long jvmBytesWrittenToStorage = new Long(metrics.get("jvmBytesWrittenToStorage").toString());
-        Long jvmDiskBytesRead = new Long(metrics.get("jvmDiskBytesRead").toString());
-        Long jvmBytesReadFromStorage = new Long (metrics.get("jvmBytesReadFromStorage").toString());
+        String system             = aggregateCpu.get("system").toString();  //new Long(aggregateCpu.get("system").toString());
+        String idle               = aggregateCpu.get("idle").toString();
+        String iowait             = aggregateCpu.get("iowait").toString();
+        String user               = aggregateCpu.get("user").toString();
+        String nice               = aggregateCpu.get("nice").toString();
+
+        Map<String, Object> self = g.fromJson(metrics.get("self").toString(), Map.class);
+        Map<String, Object> io = g.fromJson(self.get("io").toString(), Map.class);
+
+        String jvmDiskBytesWritten  = io.get("wchar").toString();
+        String jvmBytesWrittenToStorage = io.get("write_bytes").toString();
+        String jvmDiskBytesRead = io.get("rchar").toString();
+        String jvmBytesReadFromStorage = io.get("read_bytes").toString();
 
         String[] line = new String[IO_SCHEMA.size()];
 
@@ -199,15 +218,15 @@ public class MetricsProcessor {
         line[IO_SCHEMA.indexOf("executor_number")] = executor_number;// we need to set this in the profiler code. we used to get this from dcos in a log file name. taskId.toString();
         line[IO_SCHEMA.indexOf("process_uuid")] = processUUID;
         line[IO_SCHEMA.indexOf("infrastructure")] = "implementation2";
-        line[IO_SCHEMA.indexOf("system")] = system.toString();
-        line[IO_SCHEMA.indexOf("idle")] = idle.toString();
-        line[IO_SCHEMA.indexOf("iowait")] = iowait.toString();
-        line[IO_SCHEMA.indexOf("user")] = user.toString();
-        line[IO_SCHEMA.indexOf("nice")] = nice.toString();
-        line[IO_SCHEMA.indexOf("jvmDiskBytesWritten")] = jvmDiskBytesWritten.toString();
-        line[IO_SCHEMA.indexOf("jvmBytesWrittenToStorage")] = jvmBytesWrittenToStorage.toString();
-        line[IO_SCHEMA.indexOf("jvmDiskBytesRead")] = jvmDiskBytesRead.toString();
-        line[IO_SCHEMA.indexOf("jvmBytesReadFromStorage")] = jvmBytesReadFromStorage.toString();
+        line[IO_SCHEMA.indexOf("system")] = Long.toString(new Double(system).longValue());
+        line[IO_SCHEMA.indexOf("idle")] = Long.toString(new Double(idle).longValue());
+        line[IO_SCHEMA.indexOf("iowait")] = Long.toString(new Double(iowait).longValue());
+        line[IO_SCHEMA.indexOf("user")] = Long.toString(new Double(user).longValue());
+        line[IO_SCHEMA.indexOf("nice")] = Long.toString(new Double(nice).longValue());
+        line[IO_SCHEMA.indexOf("jvmDiskBytesWritten")] = Long.toString(new Double(jvmDiskBytesWritten).longValue());
+        line[IO_SCHEMA.indexOf("jvmBytesWrittenToStorage")] = Long.toString(new Double(jvmBytesWrittenToStorage).longValue());
+        line[IO_SCHEMA.indexOf("jvmDiskBytesRead")] = Long.toString(new Double(jvmDiskBytesRead).longValue());
+        line[IO_SCHEMA.indexOf("jvmBytesReadFromStorage")] = Long.toString(new Double(jvmBytesReadFromStorage).longValue());
         try {
             ioWriter.write(String.join(",", line));
             ioWriter.write("\n");
@@ -263,27 +282,6 @@ public class MetricsProcessor {
 
         cpuMemoryBuffer.append(String.join(",", line));
         cpuMemoryBuffer.append("\n");
-
-
-        /** ALL MEMORY AND DISK VALUES ARE IN BYTES. **/
-         /*   ps.setString(1, transform_name);
-            ps.setBigDecimal(2, new BigDecimal(timestamp).divide(BigDecimal.valueOf(1000)));
-            ps.setBigDecimal(3, new BigDecimal(system_cpu_usage));
-            ps.setBigDecimal(4, new BigDecimal((process_cpu_usage)));
-            ps.setBigDecimal(5, total_memory_in_use);
-            ps.setBigDecimal(6, total_memory_committed);
-            ps.setString(7, host);
-            ps.setString(8, role);
-            ps.setString(9, taskId);
-            ps.setString(10, processUUID);
-            ps.setBigDecimal(11, new BigDecimal(timestamp));
-            ps.setBigDecimal(12, new BigDecimal(nonheapmax));
-            ps.setBigDecimal(13, new BigDecimal(heapmax));
-            ps.setBigDecimal(14, new BigDecimal(vmsize_incl_swap));
-            ps.setBigDecimal(15, total_memory_max);
-            ps.setBigDecimal(16, total_mem_usage);
-*/
-
     }
 }
 
