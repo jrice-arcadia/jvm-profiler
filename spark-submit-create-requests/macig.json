@@ -3,7 +3,7 @@
   "clientSparkVersion": "2.0.0",
   "sparkProperties": {
     "spark.mesos.driver.constraints": "slave_type:high_priority_spark",
-    "spark.app.name": "transform-bugathon-cigna-macig-0",
+    "spark.app.name": "transform-cna004-cigna-macig-0",
     "spark.sql.crossJoin.enabled": "true",
     "spark.mesos.constraints": "slave_type:high_priority_spark",
     "spark.scheduler.maxRegisteredResourcesWaitingTime": "600s",
@@ -24,7 +24,7 @@
     "spark.arcadia.extract.cassandra.blobType": "map",
     "spark.arcadia.extract.cassandra.connection.contactPoints": "10.115.101.197:9042,10.115.103.102:9042,10.115.103.236:9042,10.115.102.187:9042,10.115.101.88:9042",
     "spark.arcadia.extract.dataStoreType": "cassandra",
-    "spark.arcadia.inspec.cassandra.connection.contactPoints": "10.115.101.148:9042,10.115.101.76:9042,10.115.101.75:9042",
+    "spark.arcadia.inspec.cassandra.connection.contactPoints": "10.115.102.86:9042,10.115.102.105:9042,10.115.104.14:9042,10.115.104.198:9042",
     "spark.arcadia.inspec.cassandra.enableMultiTenancy": "true",
     "spark.arcadia.inspec.dataStoreType": "cassandra",
     "spark.arcadia.kafka.enableChartReporting": "false",
@@ -60,13 +60,13 @@
     "spark.master": "mesos://spark.marathon.l4lb.thisdcos.directory:443",
     "spark.cassandra.connection.timeout_ms": "30000",
     "spark.jars": "s3a://s3-sandbox-artifacts-repo/maven-private/all/com/arcadia/transformation/macig-notebooks/3.2.0-SNAPSHOT/jr-macig-profile/macig-notebooks-3.2.0-all.jar",
-    "spark.driver.extraJavaOptions": "-Dlog4j.configuration=file:///opt/spark/dist/conf/log4j.properties.template \n      -javaagent:\"macig-notebooks-3.2.0-all.jar\"=reporter=com.uber.profiling.reporters.S3OutputReporter,tag=macigjr,sampleInterval=5000,metricInterval=10000,ioProfiling=true",
+    "spark.driver.extraJavaOptions": "-Dlog4j.configuration=file:///opt/spark/dist/conf/log4j.properties.template \n      -javaagent:\"macig-notebooks-3.2.0-all.jar\"=reporter=com.uber.profiling.reporters.S3OutputReporter,tag=macigjr,sampleInterval=5000,metricInterval=100000,ioProfiling=true",
     "spark.mesos.uris": "s3a://s3-sandbox-artifacts-repo/maven-private/all/com/arcadia/transformation/macig-notebooks/3.2.0-SNAPSHOT/jr-macig-profile/macig-notebooks-3.2.0-all.jar",
     "spark.executorEnv.spark.authenticate": "true",
     "spark.executorEnv.spark.authenticate.secret": "rooted",
     "spark.executorEnv.spark.network.crypto.enabled": "true",
     "spark.executorEnv.spark.authenticate.enableSaslEncryption": "true",
-    "spark.executorEnv.SPARK_EXECUTOR_OPTS": "-javaagent:\"macig-notebooks-3.2.0-all.jar\"=reporter=com.uber.profiling.reporters.S3OutputReporter,tag=macigjr,sampleInterval=5000,metricInterval=10000,ioProfiling=true\n    -Dspark.authenticate=true \n    -Dspark.authenticate.secret=rooted \n    -Dspark.network.crypto.enabled=true \n    -Dspark.authenticate.enableSaslEncryption=true\n    "
+    "spark.executorEnv.SPARK_EXECUTOR_OPTS": "-javaagent:\"macig-notebooks-3.2.0-all.jar\"=reporter=com.uber.profiling.reporters.S3OutputReporter,tag=macigjr,sampleInterval=5000,metricInterval=100000,ioProfiling=true\n    -Dspark.authenticate=true \n    -Dspark.authenticate.secret=rooted \n    -Dspark.network.crypto.enabled=true \n    -Dspark.authenticate.enableSaslEncryption=true\n    "
   },
   "mainClass": "com.arcadia.notebook.NotebookSpark",
   "appResource": "s3a://s3-sandbox-artifacts-repo/maven-private/all/com/arcadia/transformation/macig-notebooks/3.2.0-SNAPSHOT/jr-macig-profile/macig-notebooks-3.2.0-all.jar",
