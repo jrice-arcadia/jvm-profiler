@@ -38,6 +38,8 @@ public class MetricsProcessor {
     private static final String STACKTRACE_PATH = "/stacktraces/";
     private static final String IO_PATH         = "/io/";
 
+    private static FileWriter cpuAndMemoryWriter, stacktraceWriter, ioWriter;
+
     /** Path examples. **/
     // /cpuandmemory/staging/cpuandmemory_jsons.txt
     // /cpuandmemory/completed/cpumemmetrics5.csv
@@ -58,11 +60,9 @@ public class MetricsProcessor {
         stacktraceDest   = stacktraceDest + System.currentTimeMillis() + "_stacktraces.txt";
         ioDest           = ioDest + System.currentTimeMillis() + "_io.csv";
 
-        FileWriter cpuAndMemoryWriter = new FileWriter(cpuAndMemoryDest, true);
-        FileWriter stacktraceWriter   = new FileWriter(stacktraceDest, true);
-        FileWriter ioWriter            = new FileWriter(ioDest, true);
-
-
+        cpuAndMemoryWriter = new FileWriter(cpuAndMemoryDest, true);
+        stacktraceWriter   = new FileWriter(stacktraceDest, true);
+        ioWriter           = new FileWriter(ioDest, true);
 
         cpuMemoryBuffer  = new StringBuffer("");
         stackTraceBuffer = new StringBuffer("");
@@ -97,11 +97,11 @@ public class MetricsProcessor {
         System.out.println("Size of Stacktrace output: " + stackTraceBuffer.length());
         System.out.println("Size of IO output: " + ioBuffer.length());
 
-        String cpuAndMemoryDest = RAW_METRICS_DIRECTORY + CPU_MEMORY_PATH + System.currentTimeMillis() + "_cpuandmemory.csv";
+       /* String cpuAndMemoryDest = RAW_METRICS_DIRECTORY + CPU_MEMORY_PATH + System.currentTimeMillis() + "_cpuandmemory.csv";
         String stacktraceDest = RAW_METRICS_DIRECTORY + STACKTRACE_PATH + System.currentTimeMillis() + "_stacktraces.txt";
         System.out.println("Creating directories.");
         Files.createDirectories(Paths.get(RAW_METRICS_DIRECTORY + CPU_MEMORY_PATH));
-        Files.createDirectories(Paths.get(RAW_METRICS_DIRECTORY + STACKTRACE_PATH));
+        Files.createDirectories(Paths.get(RAW_METRICS_DIRECTORY + STACKTRACE_PATH));*/
         System.out.println("Writing output files:\n" + cpuAndMemoryDest + "\n" + stacktraceDest);
 
         /** Write Cpu and Memory metrics. **/
@@ -208,12 +208,17 @@ public class MetricsProcessor {
         line[IO_SCHEMA.indexOf("jvmBytesWrittenToStorage")] = jvmBytesWrittenToStorage.toString();
         line[IO_SCHEMA.indexOf("jvmDiskBytesRead")] = jvmDiskBytesRead.toString();
         line[IO_SCHEMA.indexOf("jvmBytesReadFromStorage")] = jvmBytesReadFromStorage.toString();
+        try {
+            ioWriter.write(String.join(",", line));
+            ioWriter.write("\n");
+        } catch (IOException ex) {
+            System.out.println(ex.getMessage());
+        }
     }
 
     public static void storeStackTrace(String line) {
         stackTraceBuffer.append(line+"\n");
     }
-
 
     public static void storeCpuAndMemory(Map<String, Object> metrics) throws IOException {
         String transform_name                   = metrics.get("tag").toString();
