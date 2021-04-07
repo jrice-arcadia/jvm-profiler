@@ -23,17 +23,79 @@ import java.lang.*;
 public class MetricsProcessor {
 
     private static ArrayList<String> CPU_AND_MEM_SCHEMA = new ArrayList<String>();
+    private static ArrayList<String>  IO_SCHEMA          = new ArrayList<String>();
 
     private static Gson g;
     private static String PARENT_DIR = "";
-    private static StringBuffer output; // thread safe
-    private static final String OUTPUT_FILENAME = "metrics.csv";
+    private static StringBuffer cpuMemoryBuffer; // thread safe
+    private static StringBuffer stackTraceBuffer;
+    private static StringBuffer ioBuffer;
+    private static final String STAGING         = "/staging/";
+    private static final String COMPLETED       = "/completed/";
+    private static final String NORMALIZED      = "/normalized";
+    private static final String ERROR           = "/errored/";
+    private static final String CPU_MEMORY_PATH = "/cpuandmemory/";
+    private static final String STACKTRACE_PATH = "/stacktraces/";
+    private static final String IO_PATH         = "/io/";
+
+    /** Path examples. **/
+    // /cpuandmemory/staging/cpuandmemory_jsons.txt
+    // /cpuandmemory/completed/cpumemmetrics5.csv
+
 
     public static void main(String... args) throws Exception{
         String path = args[0];
         PARENT_DIR = path;
-        output = new StringBuffer("");
+
+        cpuMemoryBuffer  = new StringBuffer("");
+        stackTraceBuffer = new StringBuffer("");
+        ioBuffer         = new StringBuffer("");
         g = new GsonBuilder().setLenient().create();
+        initCpuMemSchema();
+
+        cpuMemoryBuffer.append(String.join(",", CPU_AND_MEM_SCHEMA) + "\n");
+
+        Stream<Path> metricsFiles = Files.list(Paths.get(path));
+        metricsFiles.forEach(p ->  {
+
+            System.out.println("Processing Path: " + p);
+            try {
+                Stream<String> s = Files.lines(p);
+                String[] lines = Files.lines(p).toArray(String[]::new); // this will be small.
+                s.filter(l -> l.contains("Stacktrace:") || l.contains("CpuAndMemory:") || l.contains("IO:"))
+                        .forEach(l -> processLine(l));
+                s.close();
+            } catch (IOException ex) {
+                System.out.println("EXCEPTION: " + ex.getMessage());
+                throw new UncheckedIOException(ex);
+            }
+            System.out.println("Finished processing Path: " + p);
+        });
+        metricsFiles.close();
+        System.out.println("Size of CPU and Memory output: " + cpuMemoryBuffer.length());
+        System.out.println("Size of Stacktrace output: " + stackTraceBuffer.length());
+        System.out.println("Size of IO output: " + ioBuffer.length());
+
+        String cpuAndMemoryDest = PARENT_DIR + CPU_MEMORY_PATH + System.currentTimeMillis() + "_cpuandmemory.csv";
+        String stacktraceDest = PARENT_DIR + STACKTRACE_PATH + System.currentTimeMillis() + "_stacktraces.txt";
+        System.out.println("Creating directories.");
+        Files.createDirectories(Paths.get(PARENT_DIR + CPU_MEMORY_PATH));
+        Files.createDirectories(Paths.get(PARENT_DIR + STACKTRACE_PATH));
+        System.out.println("Writing output files:\n" + cpuAndMemoryDest + "\n" + stacktraceDest);
+
+        /** Write Cpu and Memory metrics. **/
+        Path p = Paths.get(cpuAndMemoryDest);
+        Files.createFile(p);
+        Files.write(p, cpuMemoryBuffer.toString().getBytes());
+
+        /** Write Stacktraces. **/
+        p = Paths.get(stacktraceDest);
+        Files.createFile(p);
+        Files.write(p, stackTraceBuffer.toString().getBytes());
+        return;
+    }
+
+    private static void initCpuMemSchema() {
         CPU_AND_MEM_SCHEMA.add("transform_name");
         CPU_AND_MEM_SCHEMA.add("timestamp_epoch");
         CPU_AND_MEM_SCHEMA.add("timestamp_epoch_ms");
@@ -50,44 +112,36 @@ public class MetricsProcessor {
         CPU_AND_MEM_SCHEMA.add("max_memory_available");
         CPU_AND_MEM_SCHEMA.add("virt_mem_hwm");
         CPU_AND_MEM_SCHEMA.add("mem_usage");
+    }
 
-        output.append(String.join(",", CPU_AND_MEM_SCHEMA) + "\n");
-
-        Stream<Path> metricsFiles = Files.list(Paths.get(path));
-        metricsFiles.forEach(p ->  {
-
-            System.out.println("Processing Path: " + p);
-            try {
-                Stream<String> s = Files.lines(p);
-                String[] lines = Files.lines(p).toArray(String[]::new); // this will be small.
-                s.filter(l -> l.contains("CpuAndMemory") || l.contains("heapMemoryMax"))
-                        .forEach(l -> processLine(l));
-                s.close();
-            } catch (IOException ex) {
-                System.out.println("EXCEPTION: " + ex.getMessage());
-                throw new UncheckedIOException(ex);
-            }
-            System.out.println("Finished processing Path: " + p);
-        });
-        metricsFiles.close();
-        System.out.println("Size of output: " + output.length());
-        String dest = PARENT_DIR + "/processed_metrics/" + OUTPUT_FILENAME;
-        System.out.println("Writing output to " + dest);
-        Path p = Paths.get(dest);
-        Files.createDirectory(Paths.get(PARENT_DIR + "/processed_metrics/"));
-        Files.createFile(p);
-        Files.write(p, output.toString().getBytes());
-        return;
+    private static void initIoSchema() {
+        IO_SCHEMA.add("transform_name");
+        IO_SCHEMA.add("timestamp_epoch");
+        IO_SCHEMA.add("timestamp_epoch_ms");
+        IO_SCHEMA.add("host");
+        IO_SCHEMA.add("role");
+        IO_SCHEMA.add("executor_number");
+        IO_SCHEMA.add("process_uuid");
+        IO_SCHEMA.add("infrastructure");
+        IO_SCHEMA.add("system");
+        IO_SCHEMA.add("idle");
+        IO_SCHEMA.add("iowait");
+        IO_SCHEMA.add("user");
+        IO_SCHEMA.add("nice");
+        IO_SCHEMA.add("jvmDiskBytesWritten");
+        IO_SCHEMA.add("jvmBytesWrittenToStorage");
+        IO_SCHEMA.add("jvmDiskBytesRead");
+        IO_SCHEMA.add("jvmBytesReadFromStorage");
     }
 
     private static void processLine(String line) throws UncheckedIOException {
 
         try {
-
-           if (line.contains("heapMemoryMax")) {
-                storeCpuAndMemory(g.fromJson(line, Map.class));
+           if (line.contains("CpuAndMemory")) {
+                storeCpuAndMemory(g.fromJson(line.replace("CpuAndMemory:", ""), Map.class));
                // Files.write(metricsPath, (line+"\n").getBytes(), StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOptionCPU_AND_MEM_SCHEMA.add);
-            } else if (line.contains("stacktrace")) {
+            } else if (line.contains("Stacktrace")) {
+               storeStackTrace(line.replace("Stacktrace:", ""));
                // Files.write(metricsPath, (line+"\n").getBytes(), StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOptionCPU_AND_MEM_SCHEMA.add);
             }
         } catch (IOException ex) {
@@ -96,6 +150,10 @@ public class MetricsProcessor {
         } catch (JsonIOException ex) {
             return;
         }
+    }
+
+    public static void storeStackTrace(String line) {
+        stackTraceBuffer.append(line+"\n");
     }
 
 
@@ -133,15 +191,15 @@ public class MetricsProcessor {
         line[CPU_AND_MEM_SCHEMA.indexOf("infrastructure")] = "implementation2";
         line[CPU_AND_MEM_SCHEMA.indexOf("system_cpu_usage")] = new BigDecimal(system_cpu_usage).toString();
         line[CPU_AND_MEM_SCHEMA.indexOf("process_cpu_usage")] = new BigDecimal(process_cpu_usage).toString();
-        line[CPU_AND_MEM_SCHEMA.indexOf("memory_in_use")] = total_memory_in_use.toString();
-        line[CPU_AND_MEM_SCHEMA.indexOf("memory_committed")] = total_memory_committed.toString();
+        line[CPU_AND_MEM_SCHEMA.indexOf("memory_in_use")] = Long.toString(total_memory_in_use.longValue());
+        line[CPU_AND_MEM_SCHEMA.indexOf("memory_committed")] = Long.toString(total_memory_committed.longValue());
         line[CPU_AND_MEM_SCHEMA.indexOf("virtmemsize_incl_swap")] = vmsize_incl_swap;
         line[CPU_AND_MEM_SCHEMA.indexOf("max_memory_available")] = Long.toString(total_memory_max.longValue());
         line[CPU_AND_MEM_SCHEMA.indexOf("virt_mem_hwm")] = virt_mem_hwm;
         line[CPU_AND_MEM_SCHEMA.indexOf("mem_usage")] = total_mem_usage.toString();
 
-        output.append(String.join(",", line));
-        output.append("\n");
+        cpuMemoryBuffer.append(String.join(",", line));
+        cpuMemoryBuffer.append("\n");
 
 
         /** ALL MEMORY AND DISK VALUES ARE IN BYTES. **/
