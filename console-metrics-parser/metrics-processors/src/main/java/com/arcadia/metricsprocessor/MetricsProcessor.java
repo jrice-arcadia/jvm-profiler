@@ -26,7 +26,7 @@ public class MetricsProcessor {
     private static ArrayList<String>  IO_SCHEMA          = new ArrayList<String>();
 
     private static Gson g;
-    private static String PARENT_DIR = "";
+    private static String RAW_METRICS_DIRECTORY = "";
     private static StringBuffer cpuMemoryBuffer; // thread safe
     private static StringBuffer stackTraceBuffer;
     private static StringBuffer ioBuffer;
@@ -45,16 +45,36 @@ public class MetricsProcessor {
 
     public static void main(String... args) throws Exception{
         String path = args[0];
-        PARENT_DIR = path;
+        RAW_METRICS_DIRECTORY = path;
+
+        String cpuAndMemoryDest = RAW_METRICS_DIRECTORY + CPU_MEMORY_PATH;
+        String stacktraceDest   = RAW_METRICS_DIRECTORY + STACKTRACE_PATH;
+        String ioDest           = RAW_METRICS_DIRECTORY + IO_PATH + COMPLETED;
+        System.out.println("Creating directories.");
+        Files.createDirectories(Paths.get(cpuAndMemoryDest));
+        Files.createDirectories(Paths.get(stacktraceDest));
+        Files.createDirectories(Paths.get(ioDest));
+        cpuAndMemoryDest = cpuAndMemoryDest + System.currentTimeMillis() + "_cpuandmemory.csv";
+        stacktraceDest   = stacktraceDest + System.currentTimeMillis() + "_stacktraces.txt";
+        ioDest           = ioDest + System.currentTimeMillis() + "_io.csv";
+
+        FileWriter cpuAndMemoryWriter = new FileWriter(cpuAndMemoryDest, true);
+        FileWriter stacktraceWriter   = new FileWriter(stacktraceDest, true);
+        FileWriter ioWriter            = new FileWriter(ioDest, true);
+
+
 
         cpuMemoryBuffer  = new StringBuffer("");
         stackTraceBuffer = new StringBuffer("");
         ioBuffer         = new StringBuffer("");
         g = new GsonBuilder().setLenient().create();
         initCpuMemSchema();
+        initIoSchema();
 
         cpuMemoryBuffer.append(String.join(",", CPU_AND_MEM_SCHEMA) + "\n");
-
+        ioBuffer.append(String.join(",", IO_SCHEMA) + "\n");
+        /** I think for this application's scale we gotta do all of the routing and actual writing to files in the streams. **/
+        /** Well, we are routing in the foreach. That's fine. Have processLine write to FileOutputStreams that get flushed. **/
         Stream<Path> metricsFiles = Files.list(Paths.get(path));
         metricsFiles.forEach(p ->  {
 
@@ -62,6 +82,7 @@ public class MetricsProcessor {
             try {
                 Stream<String> s = Files.lines(p);
                 String[] lines = Files.lines(p).toArray(String[]::new); // this will be small.
+
                 s.filter(l -> l.contains("Stacktrace:") || l.contains("CpuAndMemory:") || l.contains("IO:"))
                         .forEach(l -> processLine(l));
                 s.close();
@@ -76,11 +97,11 @@ public class MetricsProcessor {
         System.out.println("Size of Stacktrace output: " + stackTraceBuffer.length());
         System.out.println("Size of IO output: " + ioBuffer.length());
 
-        String cpuAndMemoryDest = PARENT_DIR + CPU_MEMORY_PATH + System.currentTimeMillis() + "_cpuandmemory.csv";
-        String stacktraceDest = PARENT_DIR + STACKTRACE_PATH + System.currentTimeMillis() + "_stacktraces.txt";
+        String cpuAndMemoryDest = RAW_METRICS_DIRECTORY + CPU_MEMORY_PATH + System.currentTimeMillis() + "_cpuandmemory.csv";
+        String stacktraceDest = RAW_METRICS_DIRECTORY + STACKTRACE_PATH + System.currentTimeMillis() + "_stacktraces.txt";
         System.out.println("Creating directories.");
-        Files.createDirectories(Paths.get(PARENT_DIR + CPU_MEMORY_PATH));
-        Files.createDirectories(Paths.get(PARENT_DIR + STACKTRACE_PATH));
+        Files.createDirectories(Paths.get(RAW_METRICS_DIRECTORY + CPU_MEMORY_PATH));
+        Files.createDirectories(Paths.get(RAW_METRICS_DIRECTORY + STACKTRACE_PATH));
         System.out.println("Writing output files:\n" + cpuAndMemoryDest + "\n" + stacktraceDest);
 
         /** Write Cpu and Memory metrics. **/
@@ -137,19 +158,56 @@ public class MetricsProcessor {
     private static void processLine(String line) throws UncheckedIOException {
 
         try {
-           if (line.contains("CpuAndMemory")) {
+           if (line.contains("CpuAndMemory:")) {
                 storeCpuAndMemory(g.fromJson(line.replace("CpuAndMemory:", ""), Map.class));
-               // Files.write(metricsPath, (line+"\n").getBytes(), StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOptionCPU_AND_MEM_SCHEMA.add);
-            } else if (line.contains("Stacktrace")) {
+            } else if (line.contains("Stacktrace:")) {
                storeStackTrace(line.replace("Stacktrace:", ""));
-               // Files.write(metricsPath, (line+"\n").getBytes(), StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOptionCPU_AND_MEM_SCHEMA.add);
-            }
+            } else if (line.contains("IO:")) {
+               storeIO(g.fromJson(line.replace("IO:", ""), Map.class));
+           }
         } catch (IOException ex) {
             System.out.println("EXCEPTION: " + ex.getMessage());
             throw new UncheckedIOException(ex);
         } catch (JsonIOException ex) {
             return;
         }
+    }
+    public static void storeIO(Map<String, Object> metrics) {
+        String transform_name                   = metrics.get("tag").toString();
+        Double timestamp_ms                     = Double.valueOf(metrics.get("epochMillis").toString());
+        String host                             = metrics.get("name").toString();
+        String role                             = metrics.get("role").toString();
+        String processUUID                      = metrics.get("processUuid").toString();
+        String executor_number                  = metrics.get("executor_number").toString();
+        Long system             = new Long(metrics.get("system").toString());
+        Long idle               = new Long(metrics.get("idle").toString());
+        Long iowait             = new Long(metrics.get("iowait").toString());
+        Long user               = new Long(metrics.get("user").toString());
+        Long nice               = new Long(metrics.get("nice").toString());
+        Long jvmDiskBytesWritten  = new Long(metrics.get("jvmDiskBytesWritten").toString());
+        Long jvmBytesWrittenToStorage = new Long(metrics.get("jvmBytesWrittenToStorage").toString());
+        Long jvmDiskBytesRead = new Long(metrics.get("jvmDiskBytesRead").toString());
+        Long jvmBytesReadFromStorage = new Long (metrics.get("jvmBytesReadFromStorage").toString());
+
+        String[] line = new String[IO_SCHEMA.size()];
+
+        line[IO_SCHEMA.indexOf("transform_name")] = transform_name;
+        line[IO_SCHEMA.indexOf("timestamp_epoch")] = Long.toString(Math.round(timestamp_ms.doubleValue() / 1000.0));
+        line[IO_SCHEMA.indexOf("timestamp_epoch_ms")] = Long.toString(Math.round(timestamp_ms));
+        line[IO_SCHEMA.indexOf("host")] = host;
+        line[IO_SCHEMA.indexOf("role")] = role;
+        line[IO_SCHEMA.indexOf("executor_number")] = executor_number;// we need to set this in the profiler code. we used to get this from dcos in a log file name. taskId.toString();
+        line[IO_SCHEMA.indexOf("process_uuid")] = processUUID;
+        line[IO_SCHEMA.indexOf("infrastructure")] = "implementation2";
+        line[IO_SCHEMA.indexOf("system")] = system.toString();
+        line[IO_SCHEMA.indexOf("idle")] = idle.toString();
+        line[IO_SCHEMA.indexOf("iowait")] = iowait.toString();
+        line[IO_SCHEMA.indexOf("user")] = user.toString();
+        line[IO_SCHEMA.indexOf("nice")] = nice.toString();
+        line[IO_SCHEMA.indexOf("jvmDiskBytesWritten")] = jvmDiskBytesWritten.toString();
+        line[IO_SCHEMA.indexOf("jvmBytesWrittenToStorage")] = jvmBytesWrittenToStorage.toString();
+        line[IO_SCHEMA.indexOf("jvmDiskBytesRead")] = jvmDiskBytesRead.toString();
+        line[IO_SCHEMA.indexOf("jvmBytesReadFromStorage")] = jvmBytesReadFromStorage.toString();
     }
 
     public static void storeStackTrace(String line) {
