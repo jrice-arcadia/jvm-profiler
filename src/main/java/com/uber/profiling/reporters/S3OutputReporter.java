@@ -34,8 +34,8 @@ public class S3OutputReporter implements Reporter {
                 m.setContentLength(content.length());
                 m.setServerSideEncryption(ObjectMetadata.AES_256_SERVER_SIDE_ENCRYPTION);
                 System.out.println("Encryption set. Writing to S3.");
-                PutObjectResult res = s3Client.putObject("cigna.data.implementation2.arcadia",
-                        "cna004/sources/macig/instances/cna004/events/jvm_metrics_output/" + System.currentTimeMillis() + "_" + metrics.get("host") + ".txt",
+                PutObjectResult res = s3Client.putObject("about.data.implementation2.arcadia",
+                        "acpm1803gundepic/sources/gundepic/instances/acpm1803gundepic/events/jvm_metrics_output/" + System.currentTimeMillis() + "_" + metrics.get("host") + ".txt",
                         new ByteArrayInputStream(content.getBytes()),
                         m);
                 System.out.println("S3 client returned from putObject(). Emptying buffer.");
