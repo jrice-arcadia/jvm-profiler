@@ -13,11 +13,12 @@ import java.util.UUID;
 public class S3OutputReporter implements Reporter {
     private static AmazonS3 s3Client = new AmazonS3Client();
     private static UUID EXECUTOR_IDENTIFIER = UUID.randomUUID();
-    private static final int MAX_BUF_SIZE_BYTES = 1000000; // 1 mb -- make it much smaller for debug
+    private static final int MAX_BUF_SIZE_BYTES = 200000; //     // 200kb // 1 mb -- make it much smaller for debug
     //private static final int MAX_BUF_SIZE_BYTES = 500000; // 500kb //5kb - this happened SO fast. but it worked.
     private static StringBuffer buffer = new StringBuffer(MAX_BUF_SIZE_BYTES); // sb is threadsafe
 
     public void report(String profilerName, Map<String, Object> metrics) {
+        if (profilerName == null || profilerName.equalsIgnoreCase("Stacktrace")) return;
         synchronized (this) {
             metrics.put("executor_number", EXECUTOR_IDENTIFIER.toString());
             String json = JsonUtils.serialize(metrics);
@@ -34,8 +35,8 @@ public class S3OutputReporter implements Reporter {
                 m.setContentLength(content.length());
                 m.setServerSideEncryption(ObjectMetadata.AES_256_SERVER_SIDE_ENCRYPTION);
                 System.out.println("Encryption set. Writing to S3.");
-                PutObjectResult res = s3Client.putObject("about.data.implementation2.arcadia",
-                        "acpm1803gundepic/sources/gundepic/instances/acpm1803gundepic/events/jvm_metrics_output/" + System.currentTimeMillis() + "_" + metrics.get("host") + ".txt",
+                PutObjectResult res = s3Client.putObject("xcls.data.implementation2.arcadia",
+                        "lewgen1/sources/lewgen/instances/lewgen1/events/jvm_metrics_output/" + System.currentTimeMillis() + "_" + metrics.get("host") + ".txt",
                         new ByteArrayInputStream(content.getBytes()),
                         m);
                 System.out.println("S3 client returned from putObject(). Emptying buffer.");
